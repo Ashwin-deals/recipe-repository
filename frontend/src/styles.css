@@ -178,7 +178,7 @@ textarea { resize: vertical; line-height: 1.55; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--tomato); box-shadow: 0 0 0 3px var(--tomato-wash); }
 
 /* ---------- Recipe cards ---------- */
-.card-grid { display: grid; gap: 16px; align-items: start; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
+.card-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); }
 .recipe-card {
   --accent: var(--basil); --accent-wash: var(--basil-wash);
   position: relative; display: flex; flex-direction: column; gap: 10px;
@@ -444,3 +444,24 @@ main:focus { outline: none; }
   padding: 10px 16px; background: var(--mustard-wash); border-bottom: 1px solid var(--rule); font-weight: 600;
 }
 .update-prompt .btn { min-height: 40px; }
+
+/* ---------- Snap-a-recipe ---------- */
+.file-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+.file-button { cursor: pointer; }
+.file-button:focus-within { outline: 3px solid var(--mustard); outline-offset: 2px; }
+.import-preview { display: flex; align-items: center; gap: 12px; margin: 0; }
+.import-preview img {
+  width: 96px; height: 96px; object-fit: cover; border-radius: var(--radius-sm);
+  border: 1px solid var(--rule); background: var(--paper);
+}
+.import-preview figcaption { display: grid; gap: 4px; min-width: 0; color: var(--ink-soft); font-size: .9rem; overflow-wrap: anywhere; }
+.import-preview .btn-text { justify-self: start; padding: 0; }
+.import-submit { justify-self: start; min-width: 140px; }
+.import-live:empty { display: none; }
+.spinner-light { width: 18px; height: 18px; border-color: rgba(255, 255, 255, .45); border-top-color: #fff; }
+.confirm-bar {
+  display: grid; gap: 10px; padding: 14px 16px; border-radius: var(--radius-sm);
+  background: var(--mustard-wash); border: 1px solid #ecd49b;
+}
+.confirm-bar p { margin: 0; }
+.confirm-actions { display: flex; flex-wrap: wrap; gap: 10px; }

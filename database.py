@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import secrets
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import ingredients
@@ -267,26 +267,40 @@ def clear_plan(conn: sqlite3.Connection) -> int:
 # AI usage cap
 # --------------------------------------------------------------------------
 
-def _ai_key(day: date | None = None) -> str:
-    return f"ai_calls:{(day or datetime.now(timezone.utc).date()).isoformat()}"
-
-
-def consume_ai_call(conn: sqlite3.Connection, daily_cap: int, day: date | None = None) -> bool:
-    """Atomically count one AI call. Returns False once today's cap is reached."""
-    if daily_cap <= 0:
-        return False
-    cursor = conn.execute(
-        """INSERT INTO meta (key, value) VALUES (?, '1')
-           ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1
-           WHERE CAST(value AS INTEGER) < ?""",
-        (_ai_key(day), daily_cap),
-    )
-    conn.commit()
-    return cursor.rowcount > 0
+AI_CALL_EVENT = "ai_call"
 
 
 def ai_calls_today(conn: sqlite3.Connection, day: date | None = None) -> int:
-    return int(get_meta(conn, _ai_key(day)) or 0)
+    day = day or datetime.now(timezone.utc).date()
+    start = f"{day.isoformat()} 00:00:00"
+    end = f"{(day + timedelta(days=1)).isoformat()} 00:00:00"
+    return conn.execute(
+        "SELECT COUNT(*) FROM events WHERE type = ? AND created_at >= ? AND created_at < ?",
+        (AI_CALL_EVENT, start, end),
+    ).fetchone()[0]
+
+
+def consume_ai_call(conn: Connection, daily_cap: int, *, feature: str = "unknown") -> bool:
+    """Record one AI call in the events table. Returns False once today's (UTC) cap is reached.
+
+    BEGIN IMMEDIATE takes the write lock before counting, so concurrent requests can't both
+    squeeze under the cap.
+    """
+    if daily_cap <= 0:
+        return False
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if ai_calls_today(conn) >= daily_cap:
+            conn.rollback()
+            return False
+        log_event(conn, AI_CALL_EVENT, {"feature": feature})
+        conn.commit()
+        return True
+    except Exception:
+        conn.rollback()
+        raise
 
 
 # --------------------------------------------------------------------------

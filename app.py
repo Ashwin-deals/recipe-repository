@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 from flask import (
     Blueprint, Flask, abort, current_app, g, jsonify, request, send_from_directory, session,
 )
+from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
@@ -61,18 +62,33 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env(name)
+    return default if value is None else value.lower() in ("1", "true", "yes", "on")
+
+
+def load_env_file(path: str) -> bool:
+    """Load KEY=value pairs from a .env file. Real environment variables always win.
+
+    Returns False (and does nothing) when the file doesn't exist.
+    """
+    return load_dotenv(path, override=False)
+
+
 def load_config() -> dict:
     """Read every setting from the environment. Cloud features stay off unless configured."""
     return {
         "DATABASE_PATH": _env("DATABASE_PATH", "instance/cartchef.db"),
         "FRONTEND_DIST": _env("FRONTEND_DIST", "frontend/dist"),
         "SECRET_KEY": _env("SECRET_KEY"),
-        "SEED_DEMO_DATA": _env("SEED_DEMO_DATA", "1").lower() in ("1", "true", "yes", "on"),
+        "SEED_DEMO_DATA": _env_bool("SEED_DEMO_DATA", True),
         "TRUST_PROXY_HOPS": _env_int("TRUST_PROXY_HOPS", 0),
         "LOG_LEVEL": _env("LOG_LEVEL", "INFO").upper(),
-        "GOOGLE_CLOUD_PROJECT": _env("GOOGLE_CLOUD_PROJECT"),
-        "GOOGLE_CLOUD_LOCATION": _env("GOOGLE_CLOUD_LOCATION"),
+        "AI_ENABLED": _env_bool("AI_ENABLED", True),
+        "GEMINI_API_KEY": _env("GEMINI_API_KEY"),
         "GEMINI_MODEL": _env("GEMINI_MODEL"),
+        "GOOGLE_CLOUD_PROJECT": _env("GOOGLE_CLOUD_PROJECT"),
+        "GOOGLE_CLOUD_LOCATION": _env("GOOGLE_CLOUD_LOCATION", "global"),
         "AI_DAILY_CAP": _env_int("AI_DAILY_CAP", 300),
         "AI_RATE_LIMIT": _env("AI_RATE_LIMIT", "10/minute"),
         "AI_TIMEOUT_SECONDS": _env_int("AI_TIMEOUT_SECONDS", 30),
@@ -86,10 +102,15 @@ def load_config() -> dict:
 
 
 def create_app(overrides: dict | None = None) -> Flask:
+    overrides = overrides or {}
+    if overrides.get("LOAD_DOTENV", True):
+        load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
     app = Flask(__name__, static_folder=None)
     app.config.update(load_config())
-    app.config.update(overrides or {})
+    app.config.update(overrides)
     logging.basicConfig(level=app.config["LOG_LEVEL"], format="%(levelname)s %(name)s: %(message)s")
+    # Only the mode is logged, never the key.
+    log.info("Gemini mode: %s", gcp.ai_mode(app.config))
 
     for key in ("DATABASE_PATH", "FRONTEND_DIST"):
         if not os.path.isabs(app.config[key]):
@@ -236,12 +257,12 @@ def ai_rate_limit() -> str:
     return current_app.config["AI_RATE_LIMIT"]
 
 
-def ai_allowed(db) -> tuple[bool, str | None]:
+def ai_allowed(db, feature: str) -> tuple[bool, str | None]:
     """Whether a Gemini call may be made now, and why not if it can't."""
     config = current_app.config
     if not gcp.ai_enabled(config):
         return False, "Gemini isn't configured, so CartChef used its built-in fallback."
-    if not database.consume_ai_call(db, config["AI_DAILY_CAP"]):
+    if not database.consume_ai_call(db, config["AI_DAILY_CAP"], feature=feature):
         return False, "Today's AI limit has been reached, so CartChef used its built-in fallback."
     return True, None
 
@@ -465,13 +486,22 @@ def api_insights():
 # Gemini features, each with a non-AI fallback
 # --------------------------------------------------------------------------
 
+NO_RECIPE_FOUND = (
+    "We couldn't find a recipe in that. Try a clearer photo, or paste the title and one ingredient per line."
+)
+
+
 @bp.post("/api/import")
 @limiter.limit(ai_rate_limit)
 def api_import():
+    """Snap-a-recipe: extract a recipe from a photo and/or pasted text to pre-fill the form.
+
+    Nothing is saved here, and the uploaded image is only held in memory for this request.
+    """
     db = get_db()
     config = current_app.config
     upload = request.files.get("image")
-
+    image = mime_type = None
     if upload and upload.filename:
         image = upload.read(gcp.MAX_IMAGE_BYTES + 1)
         if len(image) > gcp.MAX_IMAGE_BYTES:
@@ -481,43 +511,38 @@ def api_import():
         mime_type = gcp.detect_image_type(image)
         if mime_type is None:
             abort(415, "Use a JPEG, PNG or WebP image.")
-        allowed, reason = ai_allowed(db)
-        if not allowed:
-            return jsonify(
-                error="Photo import needs Gemini, which isn't available right now. "
-                      "Paste the recipe as text instead and the basic parser will fill the form.",
-                reason=reason,
-            ), 503
-        try:
-            result = gcp.ai_import_recipe(config, image=image, mime_type=mime_type)
-        except gcp.AIError:
-            return jsonify(error="Gemini couldn't read that photo. Try a clearer shot or paste the text."), 502
-        kind, source, message = "image", "ai", None
-    else:
-        text = (request.form.get("text") or "").strip()
-        if not text:
-            abort(400, "Paste some recipe text or choose a photo.")
-        if len(text) > gcp.MAX_TEXT_CHARS:
-            abort(413, f"Keep pasted text under {gcp.MAX_TEXT_CHARS} characters.")
-        allowed, message = ai_allowed(db)
-        result, source, kind = None, "basic", "text"
-        if allowed:
-            try:
-                result, source = gcp.ai_import_recipe(config, text=text), "ai"
-            except gcp.AIError:
-                message = "Gemini couldn't read that text, so CartChef used its basic parser."
-        if result is None:
-            result = ingredients.parse_recipe_text(text)
-        if not result["ingredients"]:
-            return jsonify(error="Couldn't find any ingredients. Put one per line, e.g. “2 cups flour”."), 422
+    text = (request.form.get("text") or "").strip()
+    if len(text) > gcp.MAX_TEXT_CHARS:
+        abort(413, f"Keep pasted text under {gcp.MAX_TEXT_CHARS:,} characters.")
+    if image is None and not text:
+        abort(400, "Choose a photo or paste some recipe text.")
 
-    database.log_event(db, "ai_import", {"source": source, "kind": kind, "ingredients": len(result["ingredients"])})
+    result, source = None, "fallback"
+    if gcp.ai_enabled(config):
+        if not database.consume_ai_call(db, config["AI_DAILY_CAP"], feature="import"):
+            return jsonify(error="Today's AI import limit has been reached. Try again tomorrow, "
+                                 "or type the recipe into the form."), 429
+        try:
+            result, source = gcp.ai_import_recipe(config, text=text, image=image, mime_type=mime_type), "gemini"
+        except gcp.AIError:
+            if not text:
+                return jsonify(error="Gemini couldn't read that photo right now. Try again, or paste the recipe as text."), 502
+    if result is None:
+        if not text:
+            return jsonify(error="Photo import needs the AI service, which isn't available right now. "
+                                 "Paste the recipe as text instead and we'll fill the form."), 503
+        result = ingredients.parse_recipe_text(text)
+    if not result["title"] or not result["ingredients"]:
+        return jsonify(error=NO_RECIPE_FOUND), 422
+
+    database.log_event(db, "ai_import", {
+        "source": source, "kind": "image" if image is not None else "text",
+        "ingredients": len(result["ingredients"]),
+    })
     db.commit()
-    return jsonify(
-        recipe=result,
-        source=source,
-        message=message or "Filled in by Gemini. Check everything before saving.",
-    )
+    message = ("Imported with AI, please review before saving." if source == "gemini"
+               else "Filled in with the basic text parser (AI isn't available), please review before saving.")
+    return jsonify(recipe=result, source=source, message=message)
 
 
 @bp.post("/api/recipes/<int:recipe_id>/nutrition")
@@ -525,7 +550,7 @@ def api_import():
 def api_nutrition(recipe_id: int):
     recipe = recipe_or_404(recipe_id)
     db = get_db()
-    allowed, message = ai_allowed(db)
+    allowed, message = ai_allowed(db, "nutrition")
     nutrition, tags, source = None, ingredients.keyword_diet_tags(recipe["lines"]), "basic"
     if allowed:
         try:
@@ -558,7 +583,7 @@ def api_substitute():
         recipe = database.get_recipe(get_db(), parse_id(body["recipe_id"], "recipe_id"))
         title = recipe["title"] if recipe else None
 
-    allowed, message = ai_allowed(get_db())
+    allowed, message = ai_allowed(get_db(), "substitute")
     substitutes, source = None, "basic"
     if allowed:
         try:

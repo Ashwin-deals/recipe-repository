@@ -295,6 +295,13 @@ def test_parse_recipe_text_without_headers_uses_quantity_lines():
     assert result["category"] == "Dinner"
 
 
+def test_parse_recipe_text_prefers_the_prep_time_over_cooking_times():
+    text = "Pain à la banane\nPréparation : 15 min\nIngredients:\n- 3 bananas\nMethod\nBake 60 minutes."
+    assert ing.parse_recipe_text(text)["prep_time"] == 15
+    assert ing.parse_recipe_text("Soup\n1 onion\nSimmer 20 min, then rest 1 hour")["prep_time"] == 20
+    assert ing.parse_recipe_text("Stew\nCook 2 hours\nPrep 30 minutes\n1 onion")["prep_time"] == 30
+
+
 def test_parse_recipe_text_handles_garbage():
     assert ing.parse_recipe_text("")["ingredients"] == []
     assert ing.parse_recipe_text("just some words")["ingredients"] == []

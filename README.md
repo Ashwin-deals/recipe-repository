@@ -195,12 +195,70 @@ All are off by default and turn on only when their env vars are set. Cloud failu
 
 | Feature | Env vars | Behaviour without it |
 |---|---|---|
-| Gemini (import, nutrition, substitutions) | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GEMINI_MODEL` | Heuristic text parser, keyword diet tags, built-in substitution list; photo import shows a friendly message |
+| Gemini (import, nutrition, substitutions) | `GEMINI_MODEL` plus `GEMINI_API_KEY` *or* `GOOGLE_CLOUD_PROJECT` (see Snap-a-recipe) | Heuristic text parser, keyword diet tags, built-in substitution list; photo import shows a friendly message |
 | SQLite persistence | `GCS_BUCKET`, `GCS_DB_OBJECT` | Local file only |
 | Event mirror | `BIGQUERY_DATASET`, `BIGQUERY_TABLE` (+ project) | Events stay in SQLite |
 | Looker Studio link | `LOOKER_STUDIO_URL` (https only) | Link hidden |
 
-The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text) and `created_at TIMESTAMP`. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, stored in the database).
+The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text) and `created_at TIMESTAMP`. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, counted in the `events` table).
+
+## Snap-a-recipe
+
+Photograph a recipe card, upload a screenshot, or paste messy recipe text in any language. CartChef sends it to
+Gemini, which extracts the title, prep time, category and ingredients **in English**, and the add-recipe form is
+**pre-filled for you to review and edit**. Nothing is saved until you press **Save recipe**.
+
+**How it works**
+
+1. Dashboard → **New recipe** → **Snap a recipe**: *Take photo* (opens the camera on phones), *Choose image*, and/or
+   paste text, then **Import**. A thumbnail is shown before sending; wrong types and files over 5 MB are rejected
+   instantly in the browser.
+2. `POST /api/import` (multipart: `image` and/or `text`) checks the upload's real file signature (JPEG, PNG or WebP
+   only, max 5 MB) and the text (max 8,000 characters). The image is processed in memory and never stored.
+3. Gemini is told to extract only recipe fields and to ignore any instructions inside the photo or text. Its JSON
+   reply is treated as untrusted: code fences are stripped, the category is forced to Breakfast, Dinner or Dessert,
+   prep time is clamped to 0–1440 minutes, ingredients are trimmed, de-duplicated, capped at 60 lines of 200
+   characters, and control characters are removed. An empty result returns a friendly "couldn't find a recipe" error.
+4. If you've already typed in a field the import would change, the form asks first: **Replace with import** or
+   **Keep mine, fill empty fields**.
+
+Response: `{"recipe": {"title", "prep_time", "category", "ingredients": [...]}, "source": "gemini" | "fallback", "message"}`.
+
+**Without AI** (no key, `AI_ENABLED=0`, or Gemini fails): pasted text goes through a built-in parser (title = first
+line; ingredients = lines after an "Ingredients" heading until "Method/Directions/Instructions", otherwise lines
+that start with a quantity) and comes back with `"source": "fallback"`. A photo alone gets a friendly message
+suggesting you paste the text instead.
+
+**Guardrails:** 10 requests per minute per client (`AI_RATE_LIMIT`), a daily cap on AI calls stored in the database
+(`AI_DAILY_CAP`, default 300; the import returns HTTP 429 once it's reached), a 30-second request timeout, and an
+`ai_import` event per import (no image data, no secrets).
+
+**Environment variables** (read from the real environment or a local `.env`; real variables win):
+
+| Variable | Purpose |
+|---|---|
+| `GEMINI_MODEL` | Model name to call (required for AI; `.env.example` suggests one) |
+| `GEMINI_API_KEY` | Gemini API key from Google AI Studio. If set, the client uses it ("api-key" mode) |
+| `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | Used when there's no API key: Vertex AI with Application Default Credentials ("vertex" mode; location defaults to `global`) |
+| `AI_ENABLED` | `1` (default) or `0` to force the fallbacks |
+| `AI_DAILY_CAP`, `AI_RATE_LIMIT`, `AI_TIMEOUT_SECONDS` | Guardrails (300, 10/minute, 30) |
+
+At startup the log says only which mode is active, e.g. `Gemini mode: api-key`, `vertex` or `disabled`. The API key
+is never logged, returned in a response, or included in an error message.
+
+**Run it locally with Gemini**
+
+```bash
+cp .env.example .env
+# edit .env: set GEMINI_API_KEY=<your key> (and check GEMINI_MODEL); .env is git- and docker-ignored
+source .venv/bin/activate
+flask --app app run --debug --port 5001       # log shows "Gemini mode: api-key"
+cd frontend && npm run dev                    # second terminal; open http://localhost:5173
+```
+
+For Vertex AI instead, leave `GEMINI_API_KEY` empty, set `GOOGLE_CLOUD_PROJECT` (and optionally
+`GOOGLE_CLOUD_LOCATION`), and run `gcloud auth application-default login` once. With neither set, everything still
+works using the fallbacks. Tests never call Gemini: `pytest tests/test_import.py` uses a fake client.
 
 ## Deployment
 

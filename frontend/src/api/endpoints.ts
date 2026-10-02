@@ -51,10 +51,10 @@ export const buildPlanList = () => api.post<BuildResult>("/api/planner/build");
 
 export const getInsights = () => api.get<InsightsData>("/api/insights");
 
-export const importRecipe = (source: { text: string } | { image: File }) => {
+export const importRecipe = ({ image, text }: { image?: File | null; text?: string }) => {
   const form = new FormData();
-  if ("image" in source) form.append("image", source.image);
-  else form.append("text", source.text);
+  if (image) form.append("image", image);
+  if (text?.trim()) form.append("text", text);
   return api.postForm<ImportResult>("/api/import", form);
 };
 

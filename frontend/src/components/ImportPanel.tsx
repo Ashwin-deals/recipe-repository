@@ -1,98 +1,127 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type ChangeEvent, type FormEvent } from "react";
 import { importRecipe } from "../api/endpoints";
 import { useConfig } from "../hooks/useConfig";
 import { errorMessage } from "../lib/errors";
-import type { RecipeDraft } from "../types";
+import { checkImage } from "../lib/imageCheck";
+import type { ImportResult } from "../types";
 import { Icon } from "./Icon";
 
-type Mode = "text" | "image";
+const MAX_TEXT = 8000;
 
-/** Snap-a-recipe: photo or pasted text pre-fills the recipe form. Never saves anything. */
-export function ImportPanel({ onPrefill }: { onPrefill: (draft: RecipeDraft) => void }) {
+type Status =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "success"; message: string }
+  | { kind: "error"; message: string };
+
+/**
+ * Snap-a-recipe: a photo/screenshot and/or pasted text is sent to /api/import and the result
+ * handed to the form for review. Nothing is saved here.
+ */
+export function ImportPanel({ onImported }: { onImported: (result: ImportResult) => void }) {
   const { ai_enabled: aiEnabled, max_image_bytes: maxBytes } = useConfig();
-  const [mode, setMode] = useState<Mode>("text");
+  const id = useId();
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ message: string; error: boolean } | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [status, setStatus] = useState<Status>({ kind: "idle" });
+
+  useEffect(() => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => {
+      URL.revokeObjectURL(url);
+      setPreview(null);
+    };
+  }, [file]);
+
+  function chooseFile(event: ChangeEvent<HTMLInputElement>) {
+    const chosen = event.target.files?.[0] ?? null;
+    event.target.value = ""; // allow picking the same file again after removing it
+    if (!chosen) return;
+    const problem = checkImage(chosen, maxBytes);
+    if (problem) {
+      setStatus({ kind: "error", message: problem });
+      return;
+    }
+    setFile(chosen);
+    setStatus({ kind: "idle" });
+  }
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (mode === "image") {
-      if (!file) return setStatus({ message: "Choose a photo first.", error: true });
-      if (file.size > maxBytes) return setStatus({ message: "That photo is over 5 MB. Try a smaller one.", error: true });
-    } else if (!text.trim()) {
-      return setStatus({ message: "Paste some recipe text first.", error: true });
+    if (status.kind === "loading") return;
+    if (!file && !text.trim()) {
+      setStatus({ kind: "error", message: "Choose a photo or paste some recipe text first." });
+      return;
     }
-    setBusy(true);
-    setStatus({ message: mode === "image" ? "Reading your photo…" : "Reading your recipe…", error: false });
+    setStatus({ kind: "loading" });
     try {
-      const result = await importRecipe(mode === "image" && file ? { image: file } : { text });
-      onPrefill(result.recipe);
-      setStatus({ message: result.message, error: false });
+      const result = await importRecipe({ image: file, text });
+      setStatus({ kind: "success", message: result.message });
+      onImported(result);
     } catch (err) {
-      setStatus({ message: errorMessage(err), error: true });
-    } finally {
-      setBusy(false);
+      setStatus({ kind: "error", message: errorMessage(err) });
     }
   }
 
+  const loading = status.kind === "loading";
   return (
-    <section className="panel import-panel" aria-labelledby="import-heading">
-      <h2 id="import-heading">
+    <section className="panel import-panel" aria-labelledby={`${id}-heading`}>
+      <h2 id={`${id}-heading`}>
         <Icon name="camera" /> Snap a recipe
       </h2>
-      <p className="hint">
-        Paste a recipe in any language or upload a photo or screenshot. We'll fill the form below for you to review.
-        Nothing is saved until you press <strong>Save recipe</strong>.
-        {!aiEnabled && " Gemini is off, so pasted text uses the basic parser and photos aren't available."}
+      <p className="hint" id={`${id}-hint`}>
+        Upload a photo or screenshot, or paste a recipe in any language. We'll fill in the form below for you to
+        review; nothing is saved until you press <strong>Save recipe</strong>.
+        {!aiEnabled && " The AI service is off, so pasted text uses a basic parser and photos can't be read."}
       </p>
-      <form className="import-form" onSubmit={(event) => void submit(event)}>
-        <div className="segmented" role="group" aria-label="Import source">
-          {(["text", "image"] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              className={mode === option ? "is-active" : ""}
-              aria-pressed={mode === option}
-              onClick={() => setMode(option)}
-            >
-              {option === "text" ? "Paste text" : "Photo"}
-            </button>
-          ))}
-        </div>
-        {mode === "text" ? (
-          <div className="field">
-            <label className="visually-hidden" htmlFor="import-text">
-              Recipe text
-            </label>
-            <textarea
-              id="import-text"
-              rows={5}
-              maxLength={8000}
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              placeholder={"Banana pancakes\nPrep 15 min\nIngredients:\n2 ripe bananas\n1 cup flour"}
-            />
-          </div>
-        ) : (
-          <label className="file-drop">
+      <form className="import-form" onSubmit={(event) => void submit(event)} aria-describedby={`${id}-hint`}>
+        <div className="file-buttons">
+          <label className="btn btn-ghost file-button">
             <Icon name="camera" />
-            <span>{file ? file.name : "Choose a JPEG, PNG or WebP (max 5 MB)"}</span>
-            <input
-              className="visually-hidden"
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
+            <span>Take photo</span>
+            <input className="visually-hidden" type="file" accept="image/*" capture="environment"
+              onChange={chooseFile} disabled={loading} />
           </label>
+          <label className="btn btn-ghost file-button">
+            <Icon name="plus" />
+            <span>Choose image</span>
+            <input className="visually-hidden" type="file" accept="image/*" onChange={chooseFile} disabled={loading} />
+          </label>
+        </div>
+
+        {file && preview && (
+          <figure className="import-preview">
+            <img src={preview} alt="Selected recipe photo" />
+            <figcaption>
+              <span>{file.name}</span>
+              <button type="button" className="btn-text" onClick={() => setFile(null)} disabled={loading}>
+                Remove
+              </button>
+            </figcaption>
+          </figure>
         )}
-        <button className="btn btn-ghost" type="submit" disabled={busy}>
-          <Icon name="sparkle" />
-          <span>{busy ? "Reading…" : "Fill the form"}</span>
+
+        <div className="field">
+          <label htmlFor={`${id}-text`}>Or paste recipe text</label>
+          <textarea id={`${id}-text`} rows={5} maxLength={MAX_TEXT} value={text} disabled={loading}
+            onChange={(event) => setText(event.target.value)}
+            placeholder={"Banana pancakes\nPrep 15 min\nIngredients:\n2 ripe bananas\n1 cup flour"} />
+        </div>
+
+        <button className="btn btn-primary import-submit" type="submit" disabled={loading} aria-busy={loading}>
+          {loading ? <span className="spinner spinner-light" aria-hidden="true" /> : <Icon name="sparkle" />}
+          <span>{loading ? "Importing…" : "Import"}</span>
         </button>
-        {status && (
-          <p className={status.error ? "import-status is-error" : "import-status"} role="status">
+
+        <div aria-live="polite" className="import-live">
+          {status.kind === "loading" && <p className="import-status">Reading your recipe…</p>}
+          {status.kind === "success" && <p className="import-status">{status.message}</p>}
+        </div>
+        {status.kind === "error" && (
+          <p className="import-status is-error" role="alert">
             {status.message}
           </p>
         )}

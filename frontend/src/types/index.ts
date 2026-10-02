@@ -122,7 +122,7 @@ export interface RecipeDraft {
 
 export interface ImportResult {
   recipe: RecipeDraft;
-  source: Source;
+  source: "gemini" | "fallback";
   message: string;
 }
 
