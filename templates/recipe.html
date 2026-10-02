@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, diet_tags, scaler %}
+{% block title %}{{ recipe.title }}{% endblock %}
+{% block page %}recipe{% endblock %}
+{% block content %}
+<article class="recipe-page cat-{{ recipe.category|lower }}" data-recipe="{{ recipe.id }}">
+  <header class="recipe-hero">
+    <a class="link-quiet" href="{{ url_for('main.index') }}">← All recipes</a>
+    <div class="card-top">
+      <span class="tag tag-{{ recipe.category|lower }}">{{ recipe.category }}</span>
+      <span class="meta">{{ icon('clock') }} {{ recipe.prep_time }} min prep</span>
+    </div>
+    <h1>{{ recipe.title }}</h1>
+    {{ diet_tags(recipe.diet_tags) }}
+  </header>
+
+  <div class="recipe-layout">
+    <section class="panel" aria-labelledby="ingredients-heading">
+      <div class="panel-head">
+        <h2 id="ingredients-heading">Ingredients <span class="scale-badge" data-scale-badge hidden></span></h2>
+        {{ scaler(recipe, multipliers) }}
+      </div>
+      <ul class="lines lines-detail" data-lines>
+        {% for line in recipe.lines %}
+        <li>
+          <span class="line-row">
+            <span data-line-text>{{ line }}</span>
+            <button class="btn-swap" type="button" data-swap data-ingredient="{{ line }}"
+                    aria-label="Suggest substitutes for {{ line }}">{{ icon('swap') }}<span>Swap</span></button>
+          </span>
+          <div class="swap-box" data-swap-box hidden></div>
+        </li>
+        {% endfor %}
+      </ul>
+      <button class="btn btn-primary btn-block" type="button" data-add-recipe>{{ icon('cart') }}<span>Add to shopping list</span></button>
+    </section>
+
+    <aside class="panel panel-nutrition" aria-labelledby="nutrition-heading">
+      <h2 id="nutrition-heading">Nutrition <span class="estimate-label">estimate</span></h2>
+      <div data-nutrition-box>
+        {% if recipe.nutrition %}
+        <dl class="nutrition">
+          <div><dt>Calories</dt><dd>{{ recipe.nutrition.calories }} kcal</dd></div>
+          <div><dt>Protein</dt><dd>{{ recipe.nutrition.protein_g if recipe.nutrition.protein_g is not none else '—' }} g</dd></div>
+          <div><dt>Carbs</dt><dd>{{ recipe.nutrition.carbs_g if recipe.nutrition.carbs_g is not none else '—' }} g</dd></div>
+          <div><dt>Fat</dt><dd>{{ recipe.nutrition.fat_g if recipe.nutrition.fat_g is not none else '—' }} g</dd></div>
+        </dl>
+        <p class="hint">Per serving{% if recipe.nutrition.servings %}, about {{ recipe.nutrition.servings }} servings{% endif %}. Estimated by Gemini.</p>
+        {% else %}
+        <p class="hint">No nutrition estimate yet. Diet tags above come from an ingredient keyword check.</p>
+        {% endif %}
+      </div>
+      <button class="btn btn-ghost btn-block" type="button" data-nutrition>{{ icon('sparkle') }}<span>{% if recipe.nutrition %}Re-estimate{% else %}Estimate nutrition{% endif %}</span></button>
+      {% if not ai_enabled %}<p class="hint">Gemini is off, so this shows keyword-based diet tags only.</p>{% endif %}
+    </aside>
+  </div>
+
+  <form class="danger-zone" method="post" action="{{ url_for('main.delete_recipe', recipe_id=recipe.id) }}" data-confirm="Tap again to delete">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-danger" type="submit">{{ icon('trash') }}<span>Delete recipe</span></button>
+  </form>
+</article>
+{% endblock %}

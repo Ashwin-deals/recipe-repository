@@ -1,0 +1,19 @@
+{
+  "name": "CartChef: Recipe Box & Shopping List",
+  "short_name": "CartChef",
+  "description": "Save recipes, scale them, and build one consolidated shopping checklist.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbf5ea",
+  "theme_color": "#c8442a",
+  "icons": [
+    { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Shopping list", "short_name": "List", "url": "/list" },
+    { "name": "Meal planner", "short_name": "Planner", "url": "/planner" }
+  ]
+}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon %}
+{% block title %}Meal planner{% endblock %}
+{% block page %}planner{% endblock %}
+{% block content %}
+<div class="planner-page">
+  <div class="pane-head">
+    <div>
+      <p class="eyebrow">Weekly planner</p>
+      <h1>Plan the week, shop once</h1>
+    </div>
+    <form method="post" action="{{ url_for('main.planner_build') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-primary" type="submit">{{ icon('cart') }}<span>Build shopping list</span></button>
+    </form>
+  </div>
+
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+
+  {% if recipes %}
+  <form class="panel plan-form" method="post" action="{{ url_for('main.planner_add') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="field">
+      <label for="plan-day">Day</label>
+      <select id="plan-day" name="day" required>
+        {% for day in days %}<option value="{{ day }}">{{ day }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field field-grow">
+      <label for="plan-recipe">Recipe</label>
+      <select id="plan-recipe" name="recipe_id" required>
+        {% for recipe in recipes %}<option value="{{ recipe.id }}">{{ recipe.title }} ({{ recipe.category }})</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="plan-multiplier">Servings</label>
+      <select id="plan-multiplier" name="multiplier">
+        {% for m in multipliers %}<option value="{{ m }}">{{ m }}x</option>{% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-ghost" type="submit">{{ icon('plus') }}<span>Add to plan</span></button>
+  </form>
+  {% else %}
+  <div class="empty"><p>Add some recipes first, then plan your week here.</p></div>
+  {% endif %}
+
+  <ol class="week">
+    {% for day in days %}
+    <li class="day" id="{{ day|lower }}">
+      <h2 class="day-name">{{ day }}</h2>
+      {% if plan[day] %}
+      <ul class="day-meals">
+        {% for entry in plan[day] %}
+        <li class="meal cat-{{ entry.category|lower }}">
+          <a href="{{ url_for('main.recipe_detail', recipe_id=entry.recipe_id) }}">{{ entry.title }}</a>
+          <span class="meal-meta">{{ entry.multiplier }}x · {{ entry.prep_time }} min</span>
+          <form method="post" action="{{ url_for('main.planner_remove', entry_id=entry.id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="btn-icon" type="submit" aria-label="Remove {{ entry.title }} from {{ day }}">×</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="day-empty">Nothing planned</p>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+
+  <form class="planner-clear" method="post" action="{{ url_for('main.planner_clear') }}" data-confirm="Tap again to clear the week">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-quiet" type="submit">Clear the week</button>
+  </form>
+</div>
+{% endblock %}

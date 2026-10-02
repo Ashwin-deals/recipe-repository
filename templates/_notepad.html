@@ -1,0 +1,27 @@
+{% from "_macros.html" import icon %}
+<div class="notepad" data-list-root>
+  <div class="notepad-head">
+    <div>
+      <p class="eyebrow">Shopping list</p>
+      <h2 class="notepad-title" id="list-heading">{% if full %}Today's shop{% else %}Your list{% endif %}</h2>
+    </div>
+    {% if not full %}<a class="link-quiet" href="{{ url_for('main.shopping_list') }}">Open full list</a>{% endif %}
+  </div>
+
+  <form class="add-item" data-add-item autocomplete="off">
+    <label class="visually-hidden" for="add-item-{{ 'full' if full else 'pane' }}">Add an item</label>
+    <input id="add-item-{{ 'full' if full else 'pane' }}" name="line" type="text" maxlength="200"
+           placeholder="Add an item, e.g. 2 lemons" required>
+    <button class="btn btn-ghost" type="submit" aria-label="Add item">{{ icon('plus') }}</button>
+  </form>
+
+  <div data-list-body>
+    {% include "_list.html" %}
+  </div>
+
+  <div class="notepad-actions">
+    <button class="btn btn-quiet" type="button" data-clear="checked">Clear checked</button>
+    <button class="btn btn-danger" type="button" data-clear="all">{{ icon('trash') }}<span>Clear list</span></button>
+  </div>
+  <p class="sync-note" data-sync-note hidden></p>
+</div>
