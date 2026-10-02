@@ -1,4 +1,9 @@
-"""CartChef: Recipe Box & Shopping List Maker. Flask app factory, pages and JSON API."""
+"""CartChef: Recipe Box & Shopping List Maker.
+
+Flask is a JSON API under /api/*. In production it also serves the built React
+app (frontend/dist), returning index.html for any other path so client-side
+routes such as /planner survive a refresh.
+"""
 from __future__ import annotations
 
 import hmac
@@ -10,9 +15,9 @@ from datetime import timedelta
 from urllib.parse import urlparse
 
 from flask import (
-    Blueprint, Flask, abort, current_app, flash, g, jsonify, redirect, render_template,
-    request, send_from_directory, session, url_for,
+    Blueprint, Flask, abort, current_app, g, jsonify, request, send_from_directory, session,
 )
+from dotenv import load_dotenv
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.exceptions import HTTPException
@@ -57,17 +62,33 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = _env(name)
+    return default if value is None else value.lower() in ("1", "true", "yes", "on")
+
+
+def load_env_file(path: str) -> bool:
+    """Load KEY=value pairs from a .env file. Real environment variables always win.
+
+    Returns False (and does nothing) when the file doesn't exist.
+    """
+    return load_dotenv(path, override=False)
+
+
 def load_config() -> dict:
     """Read every setting from the environment. Cloud features stay off unless configured."""
     return {
         "DATABASE_PATH": _env("DATABASE_PATH", "instance/cartchef.db"),
+        "FRONTEND_DIST": _env("FRONTEND_DIST", "frontend/dist"),
         "SECRET_KEY": _env("SECRET_KEY"),
-        "SEED_DEMO_DATA": _env("SEED_DEMO_DATA", "1").lower() in ("1", "true", "yes", "on"),
+        "SEED_DEMO_DATA": _env_bool("SEED_DEMO_DATA", True),
         "TRUST_PROXY_HOPS": _env_int("TRUST_PROXY_HOPS", 0),
         "LOG_LEVEL": _env("LOG_LEVEL", "INFO").upper(),
-        "GOOGLE_CLOUD_PROJECT": _env("GOOGLE_CLOUD_PROJECT"),
-        "GOOGLE_CLOUD_LOCATION": _env("GOOGLE_CLOUD_LOCATION"),
+        "AI_ENABLED": _env_bool("AI_ENABLED", True),
+        "GEMINI_API_KEY": _env("GEMINI_API_KEY"),
         "GEMINI_MODEL": _env("GEMINI_MODEL"),
+        "GOOGLE_CLOUD_PROJECT": _env("GOOGLE_CLOUD_PROJECT"),
+        "GOOGLE_CLOUD_LOCATION": _env("GOOGLE_CLOUD_LOCATION", "global"),
         "AI_DAILY_CAP": _env_int("AI_DAILY_CAP", 300),
         "AI_RATE_LIMIT": _env("AI_RATE_LIMIT", "10/minute"),
         "AI_TIMEOUT_SECONDS": _env_int("AI_TIMEOUT_SECONDS", 30),
@@ -81,14 +102,20 @@ def load_config() -> dict:
 
 
 def create_app(overrides: dict | None = None) -> Flask:
-    app = Flask(__name__)
+    overrides = overrides or {}
+    if overrides.get("LOAD_DOTENV", True):
+        load_env_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    app = Flask(__name__, static_folder=None)
     app.config.update(load_config())
-    app.config.update(overrides or {})
+    app.config.update(overrides)
     logging.basicConfig(level=app.config["LOG_LEVEL"], format="%(levelname)s %(name)s: %(message)s")
+    # Only the mode is logged, never the key.
+    log.info("Gemini mode: %s", gcp.ai_mode(app.config))
 
+    for key in ("DATABASE_PATH", "FRONTEND_DIST"):
+        if not os.path.isabs(app.config[key]):
+            app.config[key] = os.path.join(app.root_path, app.config[key])
     path = app.config["DATABASE_PATH"]
-    if not os.path.isabs(path):
-        path = app.config["DATABASE_PATH"] = os.path.join(app.root_path, path)
     gcp.restore_db(app.config, path)
     database.init_db(path, seed=app.config["SEED_DEMO_DATA"])
 
@@ -143,7 +170,7 @@ def check_csrf():
     if request.method not in WRITE_METHODS or not current_app.config["CSRF_ENABLED"]:
         return
     expected = session.get("csrf_token")
-    sent = request.headers.get("X-CSRF-Token") or request.form.get("csrf_token")
+    sent = request.headers.get("X-CSRF-Token")
     if not expected or not sent or not hmac.compare_digest(expected, sent):
         abort(403, "Your session expired. Reload the page and try again.")
 
@@ -167,38 +194,16 @@ def finish_response(response):
     return response
 
 
-def _wants_json() -> bool:
-    return request.path.startswith("/api/")
-
-
 def handle_http_error(error: HTTPException):
     # Use our own message from abort(code, "...") if given, else a friendly default.
     custom = error.description != type(error).description and error.code != 429
     message = error.description if custom else FRIENDLY_ERRORS.get(error.code, error.name)
-    if _wants_json():
-        return jsonify(error=message), error.code
-    return render_template("error.html", code=error.code, message=message), error.code
+    return jsonify(error=message), error.code
 
 
 def handle_unexpected_error(error: Exception):
     log.exception("Unhandled error on %s %s", request.method, request.path)
-    if _wants_json():
-        return jsonify(error=FRIENDLY_ERRORS[500]), 500
-    return render_template("error.html", code=500, message=FRIENDLY_ERRORS[500]), 500
-
-
-@bp.app_context_processor
-def template_globals():
-    try:
-        open_items = shopping.counts(get_db())["open"]
-    except sqlite3.Error:
-        open_items = None
-    return {
-        "csrf_token": csrf_token,
-        "open_items": open_items,
-        "ai_enabled": gcp.ai_enabled(current_app.config),
-        "categories": ingredients.CATEGORIES,
-    }
+    return jsonify(error=FRIENDLY_ERRORS[500]), 500
 
 
 # --------------------------------------------------------------------------
@@ -219,6 +224,15 @@ def parse_multiplier(value) -> int:
     return int(text)
 
 
+def parse_id(value, name: str) -> int:
+    if isinstance(value, bool):
+        abort(400, f"{name} must be a number.")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        abort(400, f"{name} must be a number.")
+
+
 def recipe_or_404(recipe_id: int) -> dict:
     recipe = database.get_recipe(get_db(), recipe_id)
     if recipe is None:
@@ -226,176 +240,36 @@ def recipe_or_404(recipe_id: int) -> dict:
     return recipe
 
 
+def list_payload(db) -> dict:
+    return {"groups": shopping.grouped_items(db), "counts": shopping.counts(db)}
+
+
+def plan_payload(db) -> dict:
+    return {"plan": database.list_plan(db), "days": list(database.DAYS)}
+
+
+def looker_url() -> str | None:
+    url = current_app.config.get("LOOKER_STUDIO_URL")
+    return url if url and urlparse(url).scheme == "https" else None
+
+
 def ai_rate_limit() -> str:
     return current_app.config["AI_RATE_LIMIT"]
 
 
-def ai_allowed(db) -> tuple[bool, str | None]:
+def ai_allowed(db, feature: str) -> tuple[bool, str | None]:
     """Whether a Gemini call may be made now, and why not if it can't."""
     config = current_app.config
     if not gcp.ai_enabled(config):
         return False, "Gemini isn't configured, so CartChef used its built-in fallback."
-    if not database.consume_ai_call(db, config["AI_DAILY_CAP"]):
+    if not database.consume_ai_call(db, config["AI_DAILY_CAP"], feature=feature):
         return False, "Today's AI limit has been reached, so CartChef used its built-in fallback."
     return True, None
 
 
 # --------------------------------------------------------------------------
-# Pages
+# App-level endpoints
 # --------------------------------------------------------------------------
-
-@bp.get("/")
-def index():
-    category = request.args.get("category")
-    if category not in ingredients.CATEGORIES:
-        category = None
-    db = get_db()
-    return render_template(
-        "index.html",
-        recipes=database.list_recipes(db, category),
-        category=category,
-        groups=shopping.grouped_items(db),
-        counts=shopping.counts(db),
-        multipliers=database.MULTIPLIERS,
-    )
-
-
-@bp.get("/recipes/new")
-def new_recipe():
-    return render_template("recipe_form.html", form={}, errors={})
-
-
-@bp.post("/recipes")
-def create_recipe():
-    form = request.form
-    data, errors = database.validate_recipe(
-        form.get("title"), form.get("prep_time"), form.get("category"), form.get("ingredients")
-    )
-    if errors:
-        return render_template("recipe_form.html", form=form, errors=errors), 400
-    db = get_db()
-    recipe_id = database.create_recipe(db, data)
-    database.log_event(db, "recipe_saved", {
-        "recipe_id": recipe_id, "title": data["title"], "category": data["category"],
-        "ingredient_count": len(data["ingredients"]),
-    })
-    db.commit()
-    flash(f"Saved “{data['title']}”.")
-    return redirect(url_for("main.index", _anchor=f"recipe-{recipe_id}"))
-
-
-@bp.get("/recipes/<int:recipe_id>")
-def recipe_detail(recipe_id: int):
-    return render_template("recipe.html", recipe=recipe_or_404(recipe_id), multipliers=database.MULTIPLIERS)
-
-
-@bp.post("/recipes/<int:recipe_id>/delete")
-def delete_recipe(recipe_id: int):
-    recipe = recipe_or_404(recipe_id)
-    db = get_db()
-    database.delete_recipe(db, recipe_id)
-    db.commit()
-    flash(f"Deleted “{recipe['title']}”.")
-    return redirect(url_for("main.index"))
-
-
-@bp.get("/list")
-def shopping_list():
-    db = get_db()
-    return render_template("list.html", groups=shopping.grouped_items(db), counts=shopping.counts(db))
-
-
-@bp.get("/list/fragment")
-def shopping_list_fragment():
-    db = get_db()
-    return render_template("_list.html", groups=shopping.grouped_items(db), counts=shopping.counts(db))
-
-
-def _render_planner(error: str | None = None, status: int = 200):
-    db = get_db()
-    return render_template(
-        "planner.html",
-        plan=database.list_plan(db),
-        recipes=database.list_recipes(db),
-        days=database.DAYS,
-        multipliers=database.MULTIPLIERS,
-        error=error,
-    ), status
-
-
-@bp.get("/planner")
-def planner():
-    return _render_planner()
-
-
-@bp.post("/planner")
-def planner_add():
-    day = request.form.get("day")
-    if day not in database.DAYS:
-        return _render_planner("Pick a day of the week.", 400)
-    try:
-        recipe_id = int(request.form.get("recipe_id", ""))
-    except ValueError:
-        return _render_planner("Pick a recipe.", 400)
-    if str(request.form.get("multiplier", "1")) not in {str(m) for m in database.MULTIPLIERS}:
-        return _render_planner("Servings must be 1x, 2x, 3x or 4x.", 400)
-    db = get_db()
-    if database.get_recipe(db, recipe_id) is None:
-        return _render_planner("That recipe doesn't exist.", 400)
-    database.add_to_plan(db, day, recipe_id, int(request.form.get("multiplier", "1")))
-    db.commit()
-    return redirect(url_for("main.planner", _anchor=day.lower()))
-
-
-@bp.post("/planner/<int:entry_id>/delete")
-def planner_remove(entry_id: int):
-    db = get_db()
-    if not database.remove_from_plan(db, entry_id):
-        abort(404, "That meal is no longer in the plan.")
-    db.commit()
-    return redirect(url_for("main.planner"))
-
-
-@bp.post("/planner/clear")
-def planner_clear():
-    db = get_db()
-    database.clear_plan(db)
-    db.commit()
-    flash("Cleared the week.")
-    return redirect(url_for("main.planner"))
-
-
-@bp.post("/planner/build")
-def planner_build():
-    db = get_db()
-    entries = [entry for day in database.list_plan(db).values() for entry in day]
-    if not entries:
-        flash("Plan some meals first, then build the list.")
-        return redirect(url_for("main.planner"))
-    added = merged = 0
-    for entry in entries:
-        stats = shopping.add_recipe(db, database.get_recipe(db, entry["recipe_id"]), entry["multiplier"], via="planner")
-        added, merged = added + stats["added"], merged + stats["merged"]
-    db.commit()
-    flash(f"Added {len(entries)} planned meals: {added} new items, {merged} merged into existing ones.")
-    return redirect(url_for("main.shopping_list"))
-
-
-@bp.get("/insights")
-def insights():
-    db = get_db()
-    config = current_app.config
-    looker_url = config.get("LOOKER_STUDIO_URL")
-    if looker_url and urlparse(looker_url).scheme != "https":
-        looker_url = None
-    return render_template(
-        "insights.html",
-        data=database.insights(db),
-        looker_url=looker_url,
-        ai_calls=database.ai_calls_today(db),
-        ai_cap=config["AI_DAILY_CAP"],
-    )
-
 
 @bp.get("/healthz")
 def healthz():
@@ -406,26 +280,69 @@ def healthz():
     return jsonify(status="ok")
 
 
-@bp.get("/sw.js")
-def service_worker():
-    response = send_from_directory(current_app.static_folder, "sw.js", mimetype="text/javascript", max_age=0)
-    response.headers["Cache-Control"] = "no-cache"
-    return response
-
-
-@bp.get("/manifest.webmanifest")
-def manifest():
-    return send_from_directory(current_app.static_folder, "manifest.webmanifest",
-                               mimetype="application/manifest+json")
-
-
-# --------------------------------------------------------------------------
-# JSON API: scaling and the shopping list
-# --------------------------------------------------------------------------
-
 @bp.get("/api/csrf")
 def api_csrf():
     return jsonify(token=csrf_token())
+
+
+@bp.get("/api/config")
+def api_config():
+    return jsonify(
+        ai_enabled=gcp.ai_enabled(current_app.config),
+        categories=list(ingredients.CATEGORIES),
+        days=list(database.DAYS),
+        multipliers=list(database.MULTIPLIERS),
+        max_image_bytes=gcp.MAX_IMAGE_BYTES,
+    )
+
+
+# --------------------------------------------------------------------------
+# Recipes
+# --------------------------------------------------------------------------
+
+@bp.get("/api/recipes")
+def api_recipes():
+    category = request.args.get("category") or None
+    if category is not None and category not in ingredients.CATEGORIES:
+        abort(400, "Category must be Breakfast, Dinner or Dessert.")
+    return jsonify(recipes=database.list_recipes(get_db(), category), category=category)
+
+
+@bp.post("/api/recipes")
+def api_create_recipe():
+    body = json_body()
+    text = body.get("ingredients")
+    if isinstance(text, list):
+        if not all(isinstance(line, str) for line in text):
+            abort(400, "Ingredients must be text, one per line.")
+        text = "\n".join(text)
+    elif text is not None and not isinstance(text, str):
+        abort(400, "Ingredients must be text, one per line.")
+    data, errors = database.validate_recipe(body.get("title"), body.get("prep_time"), body.get("category"), text)
+    if errors:
+        return jsonify(error="Please fix the highlighted fields.", fields=errors), 400
+    db = get_db()
+    recipe_id = database.create_recipe(db, data)
+    database.log_event(db, "recipe_saved", {
+        "recipe_id": recipe_id, "title": data["title"], "category": data["category"],
+        "ingredient_count": len(data["ingredients"]),
+    })
+    db.commit()
+    return jsonify(recipe=database.get_recipe(db, recipe_id)), 201
+
+
+@bp.get("/api/recipes/<int:recipe_id>")
+def api_recipe(recipe_id: int):
+    return jsonify(recipe=recipe_or_404(recipe_id))
+
+
+@bp.delete("/api/recipes/<int:recipe_id>")
+def api_delete_recipe(recipe_id: int):
+    recipe_or_404(recipe_id)
+    db = get_db()
+    database.delete_recipe(db, recipe_id)
+    db.commit()
+    return jsonify(deleted=recipe_id)
 
 
 @bp.get("/api/recipes/<int:recipe_id>/scaled")
@@ -445,10 +362,13 @@ def api_add_recipe(recipe_id: int):
     return jsonify(**stats, multiplier=multiplier, counts=shopping.counts(db))
 
 
+# --------------------------------------------------------------------------
+# Shopping list
+# --------------------------------------------------------------------------
+
 @bp.get("/api/list")
 def api_list():
-    db = get_db()
-    return jsonify(groups=shopping.grouped_items(db), counts=shopping.counts(db))
+    return jsonify(list_payload(get_db()))
 
 
 @bp.post("/api/list/items")
@@ -468,6 +388,7 @@ def api_add_item():
 
 @bp.post("/api/list/<int:item_id>/check")
 def api_check(item_id: int):
+    """Set (not toggle) an item's checked state, so replaying queued offline changes is safe."""
     checked = json_body().get("checked")
     if not isinstance(checked, bool):
         abort(400, "“checked” must be true or false.")
@@ -491,16 +412,96 @@ def api_clear():
 
 
 # --------------------------------------------------------------------------
-# JSON API: Gemini features, each with a non-AI fallback
+# Meal planner
 # --------------------------------------------------------------------------
+
+@bp.get("/api/planner")
+def api_planner():
+    return jsonify(plan_payload(get_db()))
+
+
+@bp.post("/api/planner")
+def api_planner_add():
+    body = json_body()
+    day = body.get("day")
+    if day not in database.DAYS:
+        abort(400, "Pick a day of the week.")
+    recipe_id = parse_id(body.get("recipe_id"), "recipe_id")
+    multiplier = parse_multiplier(body.get("multiplier", 1))
+    db = get_db()
+    if database.get_recipe(db, recipe_id) is None:
+        abort(400, "That recipe doesn't exist.")
+    entry_id = database.add_to_plan(db, day, recipe_id, multiplier)
+    db.commit()
+    return jsonify(entry_id=entry_id, **plan_payload(db)), 201
+
+
+@bp.delete("/api/planner/<int:entry_id>")
+def api_planner_remove(entry_id: int):
+    db = get_db()
+    if not database.remove_from_plan(db, entry_id):
+        abort(404, "That meal is no longer in the plan.")
+    db.commit()
+    return jsonify(plan_payload(db))
+
+
+@bp.post("/api/planner/clear")
+def api_planner_clear():
+    db = get_db()
+    removed = database.clear_plan(db)
+    db.commit()
+    return jsonify(removed=removed, **plan_payload(db))
+
+
+@bp.post("/api/planner/build")
+def api_planner_build():
+    db = get_db()
+    entries = [entry for day in database.list_plan(db).values() for entry in day]
+    if not entries:
+        abort(400, "Plan some meals first, then build the list.")
+    added = merged = 0
+    for entry in entries:
+        stats = shopping.add_recipe(db, database.get_recipe(db, entry["recipe_id"]), entry["multiplier"], via="planner")
+        added, merged = added + stats["added"], merged + stats["merged"]
+    db.commit()
+    return jsonify(meals=len(entries), added=added, merged=merged, counts=shopping.counts(db))
+
+
+# --------------------------------------------------------------------------
+# Insights
+# --------------------------------------------------------------------------
+
+@bp.get("/api/insights")
+def api_insights():
+    db = get_db()
+    return jsonify(
+        **database.insights(db),
+        ai_calls=database.ai_calls_today(db),
+        ai_cap=current_app.config["AI_DAILY_CAP"],
+        looker_url=looker_url(),
+    )
+
+
+# --------------------------------------------------------------------------
+# Gemini features, each with a non-AI fallback
+# --------------------------------------------------------------------------
+
+NO_RECIPE_FOUND = (
+    "We couldn't find a recipe in that. Try a clearer photo, or paste the title and one ingredient per line."
+)
+
 
 @bp.post("/api/import")
 @limiter.limit(ai_rate_limit)
 def api_import():
+    """Snap-a-recipe: extract a recipe from a photo and/or pasted text to pre-fill the form.
+
+    Nothing is saved here, and the uploaded image is only held in memory for this request.
+    """
     db = get_db()
     config = current_app.config
     upload = request.files.get("image")
-
+    image = mime_type = None
     if upload and upload.filename:
         image = upload.read(gcp.MAX_IMAGE_BYTES + 1)
         if len(image) > gcp.MAX_IMAGE_BYTES:
@@ -510,43 +511,38 @@ def api_import():
         mime_type = gcp.detect_image_type(image)
         if mime_type is None:
             abort(415, "Use a JPEG, PNG or WebP image.")
-        allowed, reason = ai_allowed(db)
-        if not allowed:
-            return jsonify(
-                error="Photo import needs Gemini, which isn't available right now. "
-                      "Paste the recipe as text instead and the basic parser will fill the form.",
-                reason=reason,
-            ), 503
-        try:
-            result = gcp.ai_import_recipe(config, image=image, mime_type=mime_type)
-        except gcp.AIError:
-            return jsonify(error="Gemini couldn't read that photo. Try a clearer shot or paste the text."), 502
-        kind, source, message = "image", "ai", None
-    else:
-        text = (request.form.get("text") or "").strip()
-        if not text:
-            abort(400, "Paste some recipe text or choose a photo.")
-        if len(text) > gcp.MAX_TEXT_CHARS:
-            abort(413, f"Keep pasted text under {gcp.MAX_TEXT_CHARS} characters.")
-        allowed, message = ai_allowed(db)
-        result, source, kind = None, "basic", "text"
-        if allowed:
-            try:
-                result, source = gcp.ai_import_recipe(config, text=text), "ai"
-            except gcp.AIError:
-                message = "Gemini couldn't read that text, so CartChef used its basic parser."
-        if result is None:
-            result = ingredients.parse_recipe_text(text)
-        if not result["ingredients"]:
-            return jsonify(error="Couldn't find any ingredients. Put one per line, e.g. “2 cups flour”."), 422
+    text = (request.form.get("text") or "").strip()
+    if len(text) > gcp.MAX_TEXT_CHARS:
+        abort(413, f"Keep pasted text under {gcp.MAX_TEXT_CHARS:,} characters.")
+    if image is None and not text:
+        abort(400, "Choose a photo or paste some recipe text.")
 
-    database.log_event(db, "ai_import", {"source": source, "kind": kind, "ingredients": len(result["ingredients"])})
+    result, source = None, "fallback"
+    if gcp.ai_enabled(config):
+        if not database.consume_ai_call(db, config["AI_DAILY_CAP"], feature="import"):
+            return jsonify(error="Today's AI import limit has been reached. Try again tomorrow, "
+                                 "or type the recipe into the form."), 429
+        try:
+            result, source = gcp.ai_import_recipe(config, text=text, image=image, mime_type=mime_type), "gemini"
+        except gcp.AIError:
+            if not text:
+                return jsonify(error="Gemini couldn't read that photo right now. Try again, or paste the recipe as text."), 502
+    if result is None:
+        if not text:
+            return jsonify(error="Photo import needs the AI service, which isn't available right now. "
+                                 "Paste the recipe as text instead and we'll fill the form."), 503
+        result = ingredients.parse_recipe_text(text)
+    if not result["title"] or not result["ingredients"]:
+        return jsonify(error=NO_RECIPE_FOUND), 422
+
+    database.log_event(db, "ai_import", {
+        "source": source, "kind": "image" if image is not None else "text",
+        "ingredients": len(result["ingredients"]),
+    })
     db.commit()
-    return jsonify(
-        recipe=result,
-        source=source,
-        message=message or "Filled in by Gemini. Check everything before saving.",
-    )
+    message = ("Imported with AI, please review before saving." if source == "gemini"
+               else "Filled in with the basic text parser (AI isn't available), please review before saving.")
+    return jsonify(recipe=result, source=source, message=message)
 
 
 @bp.post("/api/recipes/<int:recipe_id>/nutrition")
@@ -554,7 +550,7 @@ def api_import():
 def api_nutrition(recipe_id: int):
     recipe = recipe_or_404(recipe_id)
     db = get_db()
-    allowed, message = ai_allowed(db)
+    allowed, message = ai_allowed(db, "nutrition")
     nutrition, tags, source = None, ingredients.keyword_diet_tags(recipe["lines"]), "basic"
     if allowed:
         try:
@@ -584,13 +580,10 @@ def api_substitute():
         abort(400, "Tell us which ingredient to swap.")
     title = None
     if body.get("recipe_id") is not None:
-        try:
-            recipe = database.get_recipe(get_db(), int(body["recipe_id"]))
-        except (TypeError, ValueError):
-            abort(400, "recipe_id must be a number.")
+        recipe = database.get_recipe(get_db(), parse_id(body["recipe_id"], "recipe_id"))
         title = recipe["title"] if recipe else None
 
-    allowed, message = ai_allowed(get_db())
+    allowed, message = ai_allowed(get_db(), "substitute")
     substitutes, source = None, "basic"
     if allowed:
         try:
@@ -602,3 +595,31 @@ def api_substitute():
         if not substitutes:
             message = "No built-in swap for this one. Gemini can suggest more when it's configured."
     return jsonify(ingredient=ingredient, substitutes=substitutes, source=source, message=message)
+
+
+# --------------------------------------------------------------------------
+# React app (production build)
+# --------------------------------------------------------------------------
+
+@bp.get("/", defaults={"path": ""})
+@bp.get("/<path:path>")
+def frontend(path: str):
+    if path.startswith("api/"):
+        abort(404, "Unknown API endpoint.")
+    dist = current_app.config["FRONTEND_DIST"]
+    if path and os.path.isfile(os.path.join(dist, path)):
+        response = send_from_directory(dist, path)
+        if path.startswith("assets/"):
+            # Vite fingerprints everything in assets/, so it can be cached forever.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        else:
+            # index.html, sw.js, the manifest and icons must revalidate so a redeploy is picked up.
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+    if "." in path.rsplit("/", 1)[-1]:
+        abort(404, "File not found.")
+    if not os.path.isfile(os.path.join(dist, "index.html")):
+        abort(503, "The frontend isn't built yet. Run `npm run build` in frontend/ or use the Vite dev server.")
+    response = send_from_directory(dist, "index.html")
+    response.headers["Cache-Control"] = "no-cache"
+    return response

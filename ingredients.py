@@ -564,14 +564,21 @@ def parse_recipe_text(text: str) -> dict:
         title = re.sub(r"^\W*(title|recipe)\s*:\s*", "", line, flags=re.IGNORECASE).strip("#*= ")
         break
 
+    # The first time mentioned wins, unless a later line is explicitly the prep time
+    # ("Bake 60 minutes" in the method must not override "Prep: 15 min").
     prep_time = None
     for line in lines:
         match = _TIME_RE.search(line)
-        if match:
-            minutes = int(match.group(1)) * (60 if match.group(2).lower().startswith("h") else 1)
-            prep_time = minutes if 0 < minutes <= 1440 else None
-            if prep_time and "prep" in line.lower():
-                break
+        if not match:
+            continue
+        minutes = int(match.group(1)) * (60 if match.group(2).lower().startswith("h") else 1)
+        if not 0 < minutes <= 1440:
+            continue
+        is_prep = re.search(r"pr[eé]p", line, re.IGNORECASE) is not None
+        if prep_time is None or is_prep:
+            prep_time = minutes
+        if is_prep:
+            break
 
     ingredients: list[str] = []
     header_index = next((i for i, line in enumerate(lines) if _INGREDIENT_HEADER.match(line)), None)

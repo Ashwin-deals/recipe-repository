@@ -1,16 +1,23 @@
+import io
+
 import pytest
 
 import database
+import gcp
 from app import create_app, limiter
 
 # Every cloud setting is forced off so tests never depend on the developer's environment.
 OFFLINE_CONFIG = {
+    "LOAD_DOTENV": False,
     "SEED_DEMO_DATA": False,
     "CSRF_ENABLED": False,
     "SECRET_KEY": "test-secret",
+    "AI_ENABLED": True,
+    "GEMINI_API_KEY": None,
     "GOOGLE_CLOUD_PROJECT": None,
     "GOOGLE_CLOUD_LOCATION": None,
     "GEMINI_MODEL": None,
+    "AI_TIMEOUT_SECONDS": 30,
     "GCS_BUCKET": None,
     "BIGQUERY_DATASET": None,
     "LOOKER_STUDIO_URL": None,
@@ -19,11 +26,46 @@ OFFLINE_CONFIG = {
     "AI_DAILY_CAP": 300,
 }
 
+# Vertex AI mode.
 AI_CONFIG = {
     "GOOGLE_CLOUD_PROJECT": "test-project",
     "GOOGLE_CLOUD_LOCATION": "us-central1",
     "GEMINI_MODEL": "test-model-from-env",
 }
+
+# API-key mode. The key is fake; tests assert it never leaks into responses or logs.
+FAKE_API_KEY = "AIzaSyTEST-fake-key-0123456789abcdefXYZ"
+API_KEY_CONFIG = {"GEMINI_API_KEY": FAKE_API_KEY, "GEMINI_MODEL": "test-model-from-env"}
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 64
+WEBP = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 64
+
+
+def upload(data, name="photo.jpg", mimetype="image/jpeg"):
+    return {"image": (io.BytesIO(data), name, mimetype)}
+
+
+class FakeGemini:
+    """Stands in for gcp.generate_json; queue answers (dicts) or exceptions."""
+
+    def __init__(self):
+        self.calls = []
+        self.answers = []
+
+    def __call__(self, config, prompt, *, image=None, mime_type=None):
+        self.calls.append({"model": config["GEMINI_MODEL"], "prompt": prompt, "image": image, "mime_type": mime_type})
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+@pytest.fixture
+def gemini(monkeypatch):
+    fake = FakeGemini()
+    monkeypatch.setattr(gcp, "generate_json", fake)
+    return fake
 
 
 @pytest.fixture
