@@ -102,6 +102,21 @@ def test_garlic_cloves_are_normalized_to_clove_unit():
     assert (parsed.qty, parsed.unit, parsed.text) == (3, "clove", "garlic, minced")
 
 
+@pytest.mark.parametrize("line, qty, unit, text", [
+    ("1 cup + 2 tbsp milk", Fraction(9, 8), "cup", "milk"),
+    ("1 cup plus 2 tablespoons milk", Fraction(9, 8), "cup", "milk"),
+    ("2 cups + 1 tbsp + 1 tsp water", Fraction(25, 12), "cup", "water"),
+    ("1 lb + 4 oz beef", Fraction(5, 4), "lb", "beef"),
+    # Amounts that can't be added stay as they were.
+    ("1 cup + 50 g flour", Fraction(1), "cup", "+ 50 g flour"),
+    ("2 tbsp + 2 eggs", Fraction(2), "tbsp", "+ 2 eggs"),
+    ("1-2 cups + 1 tbsp stock", Fraction(1), "cup", "+ 1 tbsp stock"),
+])
+def test_compound_amounts_fold_into_one_quantity(line, qty, unit, text):
+    parsed = ing.parse_line(line)
+    assert (parsed.qty, parsed.unit, parsed.text) == (qty, unit, text)
+
+
 def test_parenthetical_note_before_unit_is_kept():
     parsed = ing.parse_line("1 (14 oz) can chopped tomatoes")
     assert (parsed.unit, parsed.note, parsed.text) == ("can", "(14 oz)", "chopped tomatoes")
@@ -160,6 +175,8 @@ def test_format_amount_compounds_awkward_volumes():
     ("1 (14 oz) can tomatoes", 2, "2 cans (14 oz) tomatoes"),
     ("3 garlic cloves, minced", 2, "6 cloves garlic, minced"),
     ("0.33 cup oil", 3, "~1 cup oil"),
+    ("1 cup + 2 tbsp milk", 2, "2 1/4 cups milk"),
+    ("1 lb + 4 oz beef", 2, "2 1/2 lb beef"),
 ])
 def test_scale_line(line, multiplier, expected):
     assert ing.scale_line(line, multiplier) == expected

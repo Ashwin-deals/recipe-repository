@@ -221,6 +221,10 @@ _SIZE_RE = re.compile(r"^\s*-?\s*(?:inch|inches|in\.|cm|mm|\")(?=\W|$)", re.IGNO
 _ARTICLE_RE = re.compile(r"^(?:a|an|one)\s+", re.IGNORECASE)
 _UNIT_RE = re.compile(r"^(?P<note>\([^)]*\)\s*)?(?P<unit>[A-Za-z]+)\.?(?=[\s,(]|$)")
 _BULLET_RE = re.compile(r"^\s*(?:[-*•·▪◦]+|\d{1,2}[.)])\s+")
+# The "+ 2 tbsp" in "1 cup + 2 tbsp milk" (or "plus 2 tbsp"): more of the same ingredient.
+_EXTRA_AMOUNT_RE = re.compile(
+    rf"^(?:\+|plus\s)\s*(?P<qty>{_NUMBER})\s*(?P<unit>[A-Za-z]+)\.?(?=[\s,(]|$)", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -303,6 +307,20 @@ def parse_line(raw: str) -> Ingredient:
         unit = UNIT_LOOKUP[unit_match.group("unit").lower()]
         note = (unit_match.group("note") or "").strip()
         rest = rest[unit_match.end():].strip()
+
+    # Fold extra amounts in a compatible unit into one exact quantity, in the first unit.
+    while unit and high is None:
+        extra = _EXTRA_AMOUNT_RE.match(rest)
+        if not extra:
+            break
+        extra_qty = parse_number(extra.group("qty"))
+        extra_unit = UNIT_LOOKUP.get(extra.group("unit").lower())
+        if extra_qty is None or not units_compatible(unit, extra_unit):
+            break
+        low += convert(extra_qty, extra_unit, unit)
+        if low > MAX_QUANTITY:
+            return _unquantified(raw, line)
+        rest = rest[extra.end():].strip()
 
     # "3 garlic cloves" -> 3 clove garlic, so it merges with "2 cloves garlic".
     if unit is None:

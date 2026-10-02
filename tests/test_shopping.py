@@ -52,6 +52,14 @@ def test_awkward_merged_amounts_read_as_compound(db):
     assert labels(db) == ["2 cups + 1 tbsp flour"]
 
 
+def test_compound_amounts_merge_with_plain_ones(db):
+    shopping.add_line(db, "1 cup + 2 tbsp milk")
+    assert shopping.add_line(db, "1 cup milk") == "merged"
+    # A merged amount copied back from the list is read the same way.
+    assert shopping.add_line(db, "3 cups + 3 tbsp milk") == "merged"
+    assert labels(db) == ["5 cups + 5 tbsp milk"]
+
+
 def test_incompatible_units_stay_separate(db):
     shopping.add_line(db, "1 cup tomatoes")
     shopping.add_line(db, "1 can tomatoes")
