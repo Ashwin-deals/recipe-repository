@@ -5,6 +5,10 @@ import { defineConfig } from "vitest/config";
 // Flask runs on 5001 in development (macOS often has AirPlay on 5000).
 const BACKEND = "http://127.0.0.1:5001";
 
+// Newer Node versions ship their own localStorage global, which hides jsdom's in the tests.
+const NO_NODE_STORAGE = "--no-experimental-webstorage";
+const testExecArgv = process.allowedNodeEnvironmentFlags.has(NO_NODE_STORAGE) ? [NO_NODE_STORAGE] : [];
+
 export default defineConfig({
   plugins: [
     react(),
@@ -63,6 +67,7 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    execArgv: testExecArgv,
     setupFiles: ["./src/test/setup.ts"],
     alias: {
       "virtual:pwa-register/react": new URL("./src/test/pwaRegisterStub.ts", import.meta.url).pathname,
