@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import threading
 
 import database
 import gcp
@@ -19,11 +20,16 @@ class FakeBlob:
     def upload_from_filename(self, path, timeout=None):
         with open(path, "rb") as fh:
             self.store[self.name] = fh.read()
+        self.store.uploads += 1
+
+
+class Store(dict):
+    uploads = 0
 
 
 class FakeBucket:
     def __init__(self):
-        self.store = {}
+        self.store = Store()
 
     def blob(self, name):
         return FakeBlob(self.store, name)
@@ -43,8 +49,9 @@ def test_backup_runs_after_writes_only(make_app, monkeypatch):
     client = make_app(GCS_BUCKET="test-bucket").test_client()
 
     client.get("/")
-    assert bucket.store == {}
+    assert gcp.flush_backup() is False
     client.post("/api/list/items", json={"line": "2 lemons"})
+    assert gcp.flush_backup() is True
     assert bucket.store["cartchef.db"].startswith(b"SQLite format 3")
 
 
@@ -53,6 +60,7 @@ def test_backup_snapshot_contains_the_write(make_app, monkeypatch, tmp_path):
     monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
     client = make_app(GCS_BUCKET="test-bucket").test_client()
     client.post("/api/list/items", json={"line": "2 lemons"})
+    gcp.flush_backup()
 
     restored = tmp_path / "restored.db"
     restored.write_bytes(bucket.store["cartchef.db"])
@@ -69,8 +77,62 @@ def test_backup_failure_never_breaks_the_request(make_app, monkeypatch, caplog):
     client = make_app(GCS_BUCKET="test-bucket").test_client()
     with caplog.at_level(logging.ERROR, logger="cartchef.gcp"):
         response = client.post("/api/list/items", json={"line": "2 lemons"})
+        assert gcp.flush_backup() is False
     assert response.status_code == 201
     assert "backup to Cloud Storage failed" in caplog.text
+
+
+def test_writes_never_wait_for_the_upload(make_app, monkeypatch):
+    bucket = FakeBucket()
+    monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
+    client = make_app(GCS_BUCKET="test-bucket").test_client()
+    assert client.post("/api/list/items", json={"line": "2 lemons"}).status_code == 201
+    assert bucket.store.uploads == 0
+
+
+def test_a_burst_of_writes_is_one_upload_with_all_of_them(make_app, monkeypatch, tmp_path):
+    bucket = FakeBucket()
+    monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
+    client = make_app(GCS_BUCKET="test-bucket").test_client()
+    for line in ("2 lemons", "1 onion", "3 eggs"):
+        client.post("/api/list/items", json={"line": line})
+    gcp.flush_backup()
+    assert bucket.store.uploads == 1
+
+    restored = tmp_path / "restored.db"
+    restored.write_bytes(bucket.store["cartchef.db"])
+    conn = sqlite3.connect(restored)
+    assert len(conn.execute("SELECT * FROM shopping_list").fetchall()) == 3
+    conn.close()
+
+
+def test_a_write_after_a_backup_schedules_another(make_app, monkeypatch):
+    bucket = FakeBucket()
+    monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
+    client = make_app(GCS_BUCKET="test-bucket").test_client()
+    client.post("/api/list/items", json={"line": "2 lemons"})
+    gcp.flush_backup()
+    client.post("/api/list/items", json={"line": "1 onion"})
+    gcp.flush_backup()
+    assert bucket.store.uploads == 2
+
+
+def test_scheduled_backup_runs_on_its_own(make_app, monkeypatch):
+    uploaded = threading.Event()
+    bucket = FakeBucket()
+    monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
+    real_backup = gcp.backup_db
+
+    def backup_then_signal(config, path):
+        result = real_backup(config, path)
+        uploaded.set()
+        return result
+
+    monkeypatch.setattr(gcp, "backup_db", backup_then_signal)
+    client = make_app(GCS_BUCKET="test-bucket", GCS_BACKUP_DELAY_SECONDS=0).test_client()
+    client.post("/api/list/items", json={"line": "2 lemons"})
+    assert uploaded.wait(timeout=5)
+    assert bucket.store.uploads == 1
 
 
 def test_restore_at_startup(make_app, monkeypatch, tmp_path):

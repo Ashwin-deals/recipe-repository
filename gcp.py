@@ -1,7 +1,7 @@
 """Optional Google Cloud integrations. Every hook is a no-op unless its env vars are set.
 
 * Gemini (google-genai), with an API key or on Vertex AI: recipe import, nutrition, substitutions.
-* Cloud Storage: restore the SQLite file at startup, back it up after writes.
+* Cloud Storage: restore the SQLite file at startup, back it up in the background after writes.
 * BigQuery: mirror app events in a background thread.
 
 Cloud failures are logged and never break a request; callers fall back to
@@ -10,6 +10,7 @@ tests run without them or without credentials.
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -372,6 +373,46 @@ def backup_db(config, path: str) -> bool:
         finally:
             if snapshot and os.path.exists(snapshot):
                 os.remove(snapshot)
+
+
+# Writes schedule one backup a few seconds later instead of uploading inside the request,
+# so nobody waits on Cloud Storage and a burst of writes (ticking off a list) is one upload.
+_pending_lock = threading.Lock()
+_pending: dict | None = None  # {"timer", "config", "path"} while a backup is scheduled
+
+
+def schedule_backup(config, path: str) -> bool:
+    """Back up the DB soon, in the background. Returns False when Cloud Storage is off."""
+    global _pending
+    if not gcs_enabled(config):
+        return False
+    with _pending_lock:
+        if _pending is None:
+            settings = {k: config.get(k) for k in ("GCS_BUCKET", "GCS_DB_OBJECT", "GOOGLE_CLOUD_PROJECT")}
+            timer = threading.Timer(config.get("GCS_BACKUP_DELAY_SECONDS", 2), _run_pending)
+            timer.daemon = True
+            _pending = {"timer": timer, "config": settings, "path": path}
+            timer.start()
+    return True
+
+
+def _run_pending() -> bool:
+    global _pending
+    with _pending_lock:
+        pending, _pending = _pending, None
+    # Cleared before the snapshot is taken, so any later write schedules a backup of its own.
+    return backup_db(pending["config"], pending["path"]) if pending else False
+
+
+def flush_backup() -> bool:
+    """Run a scheduled backup right away. Called at shutdown so the last writes aren't lost."""
+    with _pending_lock:
+        if _pending is not None:
+            _pending["timer"].cancel()
+    return _run_pending()
+
+
+atexit.register(flush_backup)
 
 
 # --------------------------------------------------------------------------

@@ -196,9 +196,12 @@ All are off by default and turn on only when their env vars are set. Cloud failu
 | Feature | Env vars | Behaviour without it |
 |---|---|---|
 | Gemini (import, nutrition, substitutions) | `GEMINI_MODEL` plus `GEMINI_API_KEY` *or* `GOOGLE_CLOUD_PROJECT` (see Snap-a-recipe) | Heuristic text parser, keyword diet tags, built-in substitution list; photo import shows a friendly message |
-| SQLite persistence | `GCS_BUCKET`, `GCS_DB_OBJECT` | Local file only |
+| SQLite persistence | `GCS_BUCKET`, `GCS_DB_OBJECT`, `GCS_BACKUP_DELAY_SECONDS` (default 2) | Local file only |
 | Event mirror | `BIGQUERY_DATASET`, `BIGQUERY_TABLE` (+ project) | Events stay in SQLite |
 | Looker Studio link | `LOOKER_STUDIO_URL` (https only) | Link hidden |
+
+The database is backed up in a background thread a couple of seconds after a write, so requests never wait on
+Cloud Storage and a burst of writes is a single upload. A backup still pending at shutdown runs before the process exits.
 
 The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text) and `created_at TIMESTAMP`. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, counted in the `events` table).
 

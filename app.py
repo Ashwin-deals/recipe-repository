@@ -94,6 +94,7 @@ def load_config() -> dict:
         "AI_TIMEOUT_SECONDS": _env_int("AI_TIMEOUT_SECONDS", 30),
         "GCS_BUCKET": _env("GCS_BUCKET"),
         "GCS_DB_OBJECT": _env("GCS_DB_OBJECT", "cartchef.db"),
+        "GCS_BACKUP_DELAY_SECONDS": _env_int("GCS_BACKUP_DELAY_SECONDS", 2),
         "BIGQUERY_DATASET": _env("BIGQUERY_DATASET"),
         "BIGQUERY_TABLE": _env("BIGQUERY_TABLE", "events"),
         "LOOKER_STUDIO_URL": _env("LOOKER_STUDIO_URL"),
@@ -190,7 +191,7 @@ def finish_response(response):
         response.headers["Cache-Control"] = "no-store"
     config = current_app.config
     if request.method in WRITE_METHODS and response.status_code < 400 and gcp.gcs_enabled(config):
-        gcp.backup_db(config, config["DATABASE_PATH"])
+        gcp.schedule_backup(config, config["DATABASE_PATH"])
     return response
 
 

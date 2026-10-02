@@ -19,6 +19,8 @@ OFFLINE_CONFIG = {
     "GEMINI_MODEL": None,
     "AI_TIMEOUT_SECONDS": 30,
     "GCS_BUCKET": None,
+    # Long enough that scheduled backups only run when a test calls gcp.flush_backup().
+    "GCS_BACKUP_DELAY_SECONDS": 60,
     "BIGQUERY_DATASET": None,
     "LOOKER_STUDIO_URL": None,
     "TRUST_PROXY_HOPS": 0,
@@ -66,6 +68,13 @@ def gemini(monkeypatch):
     fake = FakeGemini()
     monkeypatch.setattr(gcp, "generate_json", fake)
     return fake
+
+
+@pytest.fixture(autouse=True)
+def no_leftover_backup(monkeypatch):
+    """Run any backup a test scheduled while its fakes are still patched in."""
+    yield
+    gcp.flush_backup()
 
 
 @pytest.fixture
