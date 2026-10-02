@@ -8,7 +8,7 @@ Built for the **Cognizant Hackathon** (GCP track) as **Use Case 4: Recipe Box & 
 
 ## Status
 
-🚧 **In development.** The application code (Phase 3) is complete and tested locally. Cloud Run deployment and the live demo link come next.
+🚧 **In development.** The application (Flask JSON API + React frontend) is complete and tested locally. Cloud Run deployment and the live demo link come next.
 
 ---
 
@@ -52,12 +52,10 @@ AI features will fall back to a basic non-AI behaviour if Gemini is unavailable.
 
 **Application**
 
-- Python 3.12
-- Flask with Jinja2 templates
-- SQLite
-- HTML, CSS and vanilla JavaScript
-- Web app manifest and service worker (PWA)
-- Gunicorn, Flask-Limiter, pytest
+- Backend: Python 3.12, Flask (JSON API), SQLite, Gunicorn, Flask-Limiter
+- Frontend: React 18, TypeScript (strict), Vite, React Router, plain CSS
+- PWA: vite-plugin-pwa (Workbox service worker, web manifest, offline queue)
+- Tests: pytest (backend), Vitest + React Testing Library (frontend); ESLint
 
 **Google Cloud Platform**
 
@@ -80,31 +78,42 @@ AI features will fall back to a basic non-AI behaviour if Gemini is unavailable.
 ## Architecture (overview)
 
 ```
-Browser (HTML / CSS / JS, PWA)
-        |
-        v
-Flask app on Cloud Run  --->  SQLite  <--->  Cloud Storage (persistence)
-        |
-        +--->  Vertex AI (Gemini)   AI features
-        |
-        +--->  BigQuery  --->  Looker Studio   analytics
+Browser: React SPA (PWA)  --/api/*-->  Flask JSON API on Cloud Run  --->  SQLite  <--->  Cloud Storage (persistence)
+                                              |
+                                              +--->  Vertex AI (Gemini)   AI features
+                                              |
+                                              +--->  BigQuery  --->  Looker Studio   analytics
 ```
 
-The frontend and backend live in a single repository. Flask serves the pages, styles and scripts, and the whole app ships as one container.
+One repository, one container, one Cloud Run service. In production Flask serves the built React app from `frontend/dist`
+and returns `index.html` for any non-`/api` path, so refreshing on `/planner` or `/shopping` works. The frontend only
+uses relative `/api/...` URLs, so no CORS is needed; in development the Vite dev server proxies `/api` to Flask.
+All ingredient parsing, scaling and merging happens in the backend; the frontend never re-implements it.
 
 ---
 
 ## Project Structure
 
 ```
-app.py            Flask app factory, config from env vars, pages and JSON API
-database.py       SQLite schema, parameterized queries, planner, AI usage cap, insights, demo seed
-ingredients.py    Pure ingredient logic: parsing, scaling, unit conversion, merge keys, aisles, non-AI fallbacks
-shopping.py       Shopping list: add with smart merging, check, clear, group by aisle
-gcp.py            Optional Gemini, Cloud Storage and BigQuery hooks (no-ops unless configured)
-templates/        Jinja2 pages and partials (dashboard, list, recipe, form, planner, insights)
-static/           CSS, vanilla JS, service worker, web manifest, icons
-tests/            pytest suite (temporary DB, AI and cloud disabled or faked)
+app.py              Flask app factory, config from env vars, JSON API, serves frontend/dist
+database.py         SQLite schema, parameterized queries, planner, AI usage cap, insights, demo seed
+ingredients.py      Pure ingredient logic: parsing, scaling, unit conversion, merge keys, aisles, non-AI fallbacks
+shopping.py         Shopping list: add with smart merging, check, clear, group by aisle
+gcp.py              Optional Gemini, Cloud Storage and BigQuery hooks (no-ops unless configured)
+tests/              pytest suite (temporary DB, AI and cloud disabled or faked)
+frontend/
+  vite.config.ts    Vite, dev proxy, PWA (manifest + Workbox) and Vitest config
+  public/icons/     App icons
+  src/
+    main.tsx, App.tsx   Entry point, providers, routes, layout
+    api/            Typed fetch wrapper (CSRF, errors, offline) and one function per endpoint
+    components/     RecipeCard, RecipeForm, ImportPanel, CategoryFilter, ServingsSelect, ShoppingList,
+                    ListItem, PlannerGrid, InsightBars, Nav, Toast, UpdatePrompt, providers, ...
+    pages/          Dashboard, Shopping, Planner, Insights, RecipeDetail, NotFound
+    hooks/          useApi, useRecipes, useShoppingList, useConfig, useToast, useOnline, usePageTitle
+    lib/            Offline queue and list view helpers (pure, unit tested)
+    types/          API response types
+Dockerfile          Multi-stage build: Node builds the frontend, python:3.12-slim runs it
 ```
 
 Tables: `recipes`, `shopping_list` (the two core tables), plus `meal_plan`, `events` and `meta`.
@@ -113,31 +122,72 @@ Tables: `recipes`, `shopping_list` (the two core tables), plus `meal_plan`, `eve
 
 ## Run locally
 
-Requires Python 3.12. No Google Cloud account is needed: with no environment variables set, the app runs fully offline using SQLite and the built-in non-AI fallbacks. Six demo recipes are seeded on first run.
+Requires Python 3.12 and Node.js 24 (LTS). No Google Cloud account is needed: with no environment variables set, the
+app runs fully offline using SQLite and the built-in non-AI fallbacks. Six demo recipes are seeded on first run.
+
+### One-time setup
 
 ```bash
-# 1. Create and activate a virtual environment
 python3.12 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
-
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run the development server (http://127.0.0.1:5000)
-flask --app app run --debug
-
-#    or run it the way production does (http://127.0.0.1:8080)
-gunicorn --workers 1 --threads 8 --bind 127.0.0.1:8080 "app:create_app()"
-
-# 4. Run the tests
-pytest                                                     # whole suite
-pytest tests/test_ingredients.py                           # one file
-pytest "tests/test_app.py::test_check_and_uncheck_persist" # one test
+pip install -r requirements-dev.txt  # runtime deps + pytest
+cd frontend && npm ci && cd ..
 ```
 
-Optional settings live in `.env.example`; copy it to `.env` to use them with `flask run`. The database is created at `instance/cartchef.db`; delete that file to start again with the demo recipes.
+### Development (two terminals, hot reload)
 
-Keep Gunicorn at **one worker** (use threads for concurrency): SQLite, the in-memory rate limiter and the Cloud Storage backup all assume a single process.
+```bash
+# Terminal 1: Flask API on port 5001 (5000 is often taken by AirPlay on macOS)
+source .venv/bin/activate
+flask --app app run --debug --port 5001
+
+# Terminal 2: Vite dev server on http://localhost:5173 (proxies /api to Flask)
+cd frontend
+npm run dev
+```
+
+Open **http://localhost:5173**. The service worker is only active in production builds.
+
+### Production build (one server, like Cloud Run)
+
+```bash
+cd frontend && npm run build && cd ..        # writes frontend/dist
+gunicorn --workers 1 --threads 8 --bind 127.0.0.1:8080 "app:create_app()"
+```
+
+Open **http://127.0.0.1:8080**. Flask serves the built app and the API from the same origin.
+
+### Tests and checks
+
+```bash
+pytest                                                     # backend: whole suite
+pytest tests/test_ingredients.py                           # one file
+pytest "tests/test_app.py::test_check_and_uncheck_persist" # one test
+
+cd frontend
+npm test                    # Vitest + React Testing Library
+npm run lint                # ESLint
+npm run typecheck           # TypeScript (strict)
+```
+
+### Docker
+
+```bash
+docker build -t cartchef .
+docker run --rm -p 8080:8080 -e TRUST_PROXY_HOPS=0 cartchef   # http://localhost:8080
+```
+
+The image sets `TRUST_PROXY_HOPS=1` for Cloud Run (real client IPs for rate limiting, `Secure` session cookie);
+override it with `0` when running the container directly. Gunicorn reads `PORT` from the environment.
+
+Optional settings live in `.env.example`; copy it to `.env` to use them with `flask run`. The database is created at
+`instance/cartchef.db`; delete that file to start again with the demo recipes.
+
+Keep Gunicorn at **one worker** (use threads for concurrency): SQLite, the in-memory rate limiter and the Cloud Storage
+backup all assume a single process.
+
+Do not put secrets in `VITE_*` variables: Vite bakes them into the public JavaScript bundle at build time. All
+configuration in this project is read by Flask at runtime.
 
 ### Optional cloud features
 
@@ -154,7 +204,9 @@ The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text)
 
 ## Deployment
 
-*Cloud Run deployment steps will be added after the first working build.*
+The `Dockerfile` and `.dockerignore` are ready for Cloud Build and Cloud Run (one service, one container, one Gunicorn
+worker). Deployment steps will be added once the GCP project is set up. Because the SQLite file is backed up to a
+single Cloud Storage object, run the service with `--max-instances=1`.
 
 ---
 
@@ -166,6 +218,7 @@ The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text)
 - [x] Core app: database, recipe form, shopping list logic, dashboard
 - [x] Scaler, checkable list, category filter, clear button
 - [x] AI features with Gemini (code and fallbacks; not yet run against Vertex AI)
+- [x] React + TypeScript frontend (Vite, PWA) served by Flask in one container
 - [ ] Deployment to Cloud Run
 - [ ] Analytics with BigQuery and Looker Studio
 - [ ] Demo script and presentation

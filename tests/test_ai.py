@@ -212,7 +212,7 @@ def test_ai_nutrition_is_saved_and_bounded(make_app, gemini):
     assert response.json["diet_tags"] == ["gluten-free", "dairy-free"]
     saved = database.get_recipe(conn, recipe_id)
     assert saved["nutrition"]["calories"] == 512 and saved["diet_tags"] == ["gluten-free", "dairy-free"]
-    assert "estimate" in client.get(f"/recipes/{recipe_id}").get_data(as_text=True).lower()
+    assert client.get(f"/api/recipes/{recipe_id}").json["recipe"]["nutrition"]["estimate"] is True
     conn.close()
 
 
