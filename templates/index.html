@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icon, recipe_card %}
+{% block title %}Recipes{% endblock %}
+{% block page %}dashboard{% endblock %}
+{% block content %}
+<div class="dashboard">
+  <section class="pane pane-recipes" aria-labelledby="recipes-heading">
+    <div class="pane-head">
+      <div>
+        <p class="eyebrow">Recipe box</p>
+        <h1 id="recipes-heading">What's cooking this week?</h1>
+      </div>
+      <a class="btn btn-primary" href="{{ url_for('main.new_recipe') }}">{{ icon('plus') }}<span>New recipe</span></a>
+    </div>
+
+    <nav class="filters" aria-label="Filter recipes by category">
+      <a class="chip{% if not category %} is-active{% endif %}" href="{{ url_for('main.index') }}"
+         {% if not category %}aria-current="true"{% endif %}>All</a>
+      {% for c in categories %}
+      <a class="chip chip-{{ c|lower }}{% if category == c %} is-active{% endif %}"
+         href="{{ url_for('main.index', category=c) }}" {% if category == c %}aria-current="true"{% endif %}>{{ c }}</a>
+      {% endfor %}
+    </nav>
+
+    {% if recipes %}
+    <div class="card-grid">
+      {% for recipe in recipes %}{{ recipe_card(recipe, multipliers) }}{% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">
+      <p>{% if category %}No {{ category|lower }} recipes yet.{% else %}Your recipe box is empty.{% endif %}</p>
+      <a class="btn btn-primary" href="{{ url_for('main.new_recipe') }}">{{ icon('plus') }}<span>Add a recipe</span></a>
+    </div>
+    {% endif %}
+  </section>
+
+  <aside class="pane pane-list" aria-labelledby="list-heading">
+    {% with full = false %}{% include "_notepad.html" %}{% endwith %}
+  </aside>
+</div>
+{% endblock %}
