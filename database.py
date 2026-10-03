@@ -197,6 +197,18 @@ def create_recipe(conn: sqlite3.Connection, data: dict) -> int:
     return cursor.lastrowid
 
 
+def update_recipe(conn: sqlite3.Connection, recipe_id: int, data: dict) -> bool:
+    """Replace a recipe's content. Nutrition is cleared because the ingredients may have changed."""
+    lines = data["ingredients"]
+    cursor = conn.execute(
+        """UPDATE recipes SET title = ?, prep_time = ?, category = ?, ingredients = ?, diet_tags = ?, nutrition = NULL
+           WHERE id = ?""",
+        (data["title"], data["prep_time"], data["category"], "\n".join(lines),
+         json.dumps(ingredients.keyword_diet_tags(lines)), recipe_id),
+    )
+    return cursor.rowcount > 0
+
+
 def _recipe_from_row(row: sqlite3.Row) -> dict:
     recipe = dict(row)
     recipe["lines"] = recipe["ingredients"].splitlines()

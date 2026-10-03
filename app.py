@@ -86,11 +86,13 @@ def load_config() -> dict:
         "LOG_LEVEL": _env("LOG_LEVEL", "INFO").upper(),
         "AI_ENABLED": _env_bool("AI_ENABLED", True),
         "GEMINI_API_KEY": _env("GEMINI_API_KEY"),
+        "GOOGLE_GENAI_USE_VERTEXAI": _env_bool("GOOGLE_GENAI_USE_VERTEXAI", False),
         "GEMINI_MODEL": _env("GEMINI_MODEL"),
         "GOOGLE_CLOUD_PROJECT": _env("GOOGLE_CLOUD_PROJECT"),
         "GOOGLE_CLOUD_LOCATION": _env("GOOGLE_CLOUD_LOCATION", "global"),
         "AI_DAILY_CAP": _env_int("AI_DAILY_CAP", 300),
         "AI_RATE_LIMIT": _env("AI_RATE_LIMIT", "10/minute"),
+        "CHAT_RATE_LIMIT": _env("CHAT_RATE_LIMIT", "15/minute"),
         "AI_TIMEOUT_SECONDS": _env_int("AI_TIMEOUT_SECONDS", 30),
         "GCS_BUCKET": _env("GCS_BUCKET"),
         "GCS_DB_OBJECT": _env("GCS_DB_OBJECT", "cartchef.db"),
@@ -110,7 +112,7 @@ def create_app(overrides: dict | None = None) -> Flask:
     app.config.update(overrides)
     logging.basicConfig(level=app.config["LOG_LEVEL"], format="%(levelname)s %(name)s: %(message)s")
     # Only the mode is logged, never the key.
-    log.info("Gemini mode: %s", gcp.ai_mode(app.config))
+    log.info("Gemini mode: %s", gcp.ai_mode_description(app.config))
 
     for key in ("DATABASE_PATH", "FRONTEND_DIST"):
         if not os.path.isabs(app.config[key]):
@@ -257,6 +259,10 @@ def ai_rate_limit() -> str:
     return current_app.config["AI_RATE_LIMIT"]
 
 
+def chat_rate_limit() -> str:
+    return current_app.config["CHAT_RATE_LIMIT"]
+
+
 def ai_allowed(db, feature: str) -> tuple[bool, str | None]:
     """Whether a Gemini call may be made now, and why not if it can't."""
     config = current_app.config
@@ -308,8 +314,8 @@ def api_recipes():
     return jsonify(recipes=database.list_recipes(get_db(), category), category=category)
 
 
-@bp.post("/api/recipes")
-def api_create_recipe():
+def recipe_input() -> tuple[dict, dict]:
+    """Validated recipe fields from the JSON body (shared by create and update)."""
     body = json_body()
     text = body.get("ingredients")
     if isinstance(text, list):
@@ -318,7 +324,12 @@ def api_create_recipe():
         text = "\n".join(text)
     elif text is not None and not isinstance(text, str):
         abort(400, "Ingredients must be text, one per line.")
-    data, errors = database.validate_recipe(body.get("title"), body.get("prep_time"), body.get("category"), text)
+    return database.validate_recipe(body.get("title"), body.get("prep_time"), body.get("category"), text)
+
+
+@bp.post("/api/recipes")
+def api_create_recipe():
+    data, errors = recipe_input()
     if errors:
         return jsonify(error="Please fix the highlighted fields.", fields=errors), 400
     db = get_db()
@@ -334,6 +345,22 @@ def api_create_recipe():
 @bp.get("/api/recipes/<int:recipe_id>")
 def api_recipe(recipe_id: int):
     return jsonify(recipe=recipe_or_404(recipe_id))
+
+
+@bp.put("/api/recipes/<int:recipe_id>")
+def api_update_recipe(recipe_id: int):
+    recipe_or_404(recipe_id)
+    data, errors = recipe_input()
+    if errors:
+        return jsonify(error="Please fix the highlighted fields.", fields=errors), 400
+    db = get_db()
+    database.update_recipe(db, recipe_id, data)
+    database.log_event(db, "recipe_updated", {
+        "recipe_id": recipe_id, "title": data["title"], "category": data["category"],
+        "ingredient_count": len(data["ingredients"]),
+    })
+    db.commit()
+    return jsonify(recipe=database.get_recipe(db, recipe_id))
 
 
 @bp.delete("/api/recipes/<int:recipe_id>")
@@ -490,6 +517,18 @@ NO_RECIPE_FOUND = (
     "We couldn't find a recipe in that. Try a clearer photo, or paste the title and one ingredient per line."
 )
 
+# What to tell the user when Gemini fails on a photo, by AIError.kind: (HTTP status, message).
+PHOTO_ERRORS = {
+    "config": (503, "The AI service isn't set up correctly right now, so photos can't be read. "
+                    "Paste the recipe as text instead."),
+    "rate_limit": (429, "The AI service is busy or its quota is used up. Wait a minute and try again, "
+                        "or paste the recipe as text."),
+    "timeout": (504, "The AI service took too long to read that photo. Try again, or use a smaller photo."),
+    "unreadable": (422, "We couldn't read a recipe in that photo. Try a clearer, well-lit photo, "
+                        "or paste the recipe as text."),
+    "error": (502, "Something went wrong while reading that photo. Please try again, or paste the recipe as text."),
+}
+
 
 @bp.post("/api/import")
 @limiter.limit(ai_rate_limit)
@@ -524,9 +563,10 @@ def api_import():
                                  "or type the recipe into the form."), 429
         try:
             result, source = gcp.ai_import_recipe(config, text=text, image=image, mime_type=mime_type), "gemini"
-        except gcp.AIError:
+        except gcp.AIError as exc:
             if not text:
-                return jsonify(error="Gemini couldn't read that photo right now. Try again, or paste the recipe as text."), 502
+                status, message = PHOTO_ERRORS.get(exc.kind, PHOTO_ERRORS["error"])
+                return jsonify(error=message), status
     if result is None:
         if not text:
             return jsonify(error="Photo import needs the AI service, which isn't available right now. "
@@ -595,6 +635,68 @@ def api_substitute():
         if not substitutes:
             message = "No built-in swap for this one. Gemini can suggest more when it's configured."
     return jsonify(ingredient=ingredient, substitutes=substitutes, source=source, message=message)
+
+
+# What to tell the user when a chat turn fails, by AIError.kind: (HTTP status, message).
+CHAT_ERRORS = {
+    "config": (503, "The AI chef isn't set up correctly right now. Please try again later."),
+    "rate_limit": (429, "The AI service is busy or its quota is used up. Wait a minute and try again."),
+    "timeout": (504, "The AI chef took too long to answer. Please try again."),
+    "unreadable": (422, "The AI chef couldn't answer that. Try rephrasing your question."),
+    "error": (502, "Something went wrong while asking the chef. Please try again."),
+}
+
+
+def chat_fallback(message: str) -> str:
+    """Reply used when Gemini is off: built-in swaps if the message names a known ingredient."""
+    swaps = ingredients.substitutes_mentioned(message)
+    if not swaps:
+        return ("The AI chef isn't available right now. You can still scale recipes, build your list "
+                "and use the Swap buttons on a recipe page for built-in substitutions.")
+    lines = ["The AI chef isn't available right now, but here are some built-in swaps:"]
+    for name, options in swaps:
+        lines.append(f"{name.capitalize()}: " + "; ".join(f"{o['swap']} ({o['note'].rstrip('.')})" for o in options))
+    lines.append("Check ingredient labels if you're cooking for allergies.")
+    return "\n".join(lines)
+
+
+@bp.post("/api/chat")
+@limiter.limit(chat_rate_limit)
+def api_chat():
+    """Ask the chef. Stateless: the client sends recent history; the recipe is loaded here."""
+    body = json_body()
+    raw = body.get("message")
+    if not isinstance(raw, str) or not raw.strip():
+        abort(400, "Type a question for the chef.")
+    if len(raw.strip()) > gcp.CHAT_MAX_MESSAGE:
+        abort(400, f"Keep messages under {gcp.CHAT_MAX_MESSAGE} characters.")
+    message = gcp.clean_multiline(raw, gcp.CHAT_MAX_MESSAGE)
+    recipe = None
+    if body.get("recipe_id") is not None:
+        recipe = recipe_or_404(parse_id(body["recipe_id"], "recipe_id"))
+    history = gcp.clean_history(body.get("history"))
+
+    db = get_db()
+    config = current_app.config
+    if not gcp.ai_enabled(config):
+        result = {"reply": chat_fallback(message), "proposal": None, "shopping_items": []}
+        source = "fallback"
+    else:
+        if not database.consume_ai_call(db, config["AI_DAILY_CAP"], feature="chat"):
+            return jsonify(error="Today's AI limit has been reached. The chef will be back tomorrow."), 429
+        try:
+            result = gcp.ai_chat(config, message, history, recipe)
+        except gcp.AIError as exc:
+            status, error = CHAT_ERRORS.get(exc.kind, CHAT_ERRORS["error"])
+            return jsonify(error=error), status
+        source = "gemini"
+    # Never log message text: only what kind of turn it was.
+    database.log_event(db, "ai_chat", {
+        "mode": "recipe" if recipe else "general", "source": source,
+        "proposal": result["proposal"] is not None, "shopping_items": len(result["shopping_items"]),
+    })
+    db.commit()
+    return jsonify(**result, source=source)
 
 
 # --------------------------------------------------------------------------

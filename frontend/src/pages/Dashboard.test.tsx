@@ -1,6 +1,6 @@
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { makeItem, makeList, makeRecipe } from "../test/fixtures";
 import { mockApi } from "../test/mockApi";
 import { renderWithProviders } from "../test/render";
@@ -26,12 +26,12 @@ describe("Dashboard", () => {
     const panel = await screen.findByRole("complementary", { name: "Shopping list" });
     expect(await within(panel).findByText("Nothing on the list yet.")).toBeInTheDocument();
 
-    const card = (await screen.findByRole("link", { name: "Pancakes" })).closest("article");
-    if (!card) throw new Error("card not found");
-    await userEvent.click(within(card).getByRole("button", { name: /add to list/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Pancakes" }));
+    const drawer = screen.getByRole("dialog", { name: "Pancakes" });
+    await userEvent.click(within(drawer).getByRole("button", { name: /add to list/i }));
 
-    expect(await within(panel).findByText("1 1/2 cups flour")).toBeInTheDocument();
-    expect(within(panel).getByText("1 egg")).toBeInTheDocument();
+    expect(await within(panel).findByRole("button", { name: "1 1/2 cups flour" })).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: "1 egg" })).toBeInTheDocument();
     expect(within(panel).getByText("to buy", { exact: false })).toHaveTextContent("2 to buy");
   });
 
@@ -42,13 +42,13 @@ describe("Dashboard", () => {
       "GET /api/list": makeList(),
     });
     renderWithProviders(<Dashboard />);
-    expect(await screen.findByRole("link", { name: "Pancakes" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Pancakes" })).toBeInTheDocument();
 
     const dinner = screen.getByRole("button", { name: "Dinner" });
     await userEvent.click(dinner);
 
-    expect(await screen.findByRole("link", { name: "Chicken Curry" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "Pancakes" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
     expect(dinner).toHaveAttribute("aria-pressed", "true");
     expect(api.callsTo("GET", "/api/recipes?category=Dinner")).toHaveLength(1);
   });
@@ -66,12 +66,65 @@ describe("Dashboard", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("You're offline");
     fail = false;
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("link", { name: "Pancakes" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Pancakes" })).toBeInTheDocument();
   });
 
   it("shows an empty state for a category with no recipes", async () => {
     mockApi({ "GET /api/recipes?category=Dessert": { recipes: [] }, "GET /api/list": makeList() });
     renderWithProviders(<Dashboard />, { route: "/?category=Dessert" });
     expect(await screen.findByText("No dessert recipes yet.")).toBeInTheDocument();
+  });
+
+  it("closes the drawer after deleting and removes the card", async () => {
+    mockApi({
+      "GET /api/recipes": { recipes: [pancakes, curry] },
+      "GET /api/list": makeList(),
+      "DELETE /api/recipes/1": { deleted: 1 },
+    });
+    renderWithProviders(<Dashboard />);
+    await userEvent.click(await screen.findByRole("button", { name: "Pancakes" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "Tap again to delete" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();
+  });
+
+  it("filters the grid by ?q= together with the category, and clears the search", async () => {
+    const pasta = makeRecipe({ id: 3, title: "Garlic Pasta", category: "Dinner", lines: ["200 g pasta", "2 cloves garlic"], diet_tags: [] });
+    mockApi({
+      "GET /api/recipes": { recipes: [pancakes, curry, pasta] },
+      "GET /api/recipes?category=Dinner": { recipes: [curry, pasta] },
+      "GET /api/list": makeList(),
+    });
+    renderWithProviders(<Dashboard />, { route: "/?q=chicken" });
+    expect(await screen.findByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing/)).toHaveTextContent("Showing 1 of 3 recipes for “chicken”");
+
+    // Changing the category keeps the search.
+    await userEvent.click(screen.getByRole("button", { name: "Dinner" }));
+    expect(await screen.findByText(/Showing/)).toHaveTextContent("Showing 1 of 2 dinner recipes for “chicken”");
+    expect(screen.queryByRole("button", { name: "Garlic Pasta" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Garlic Pasta" })).toBeInTheDocument();
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state when the search matches nothing", async () => {
+    mockApi({ "GET /api/recipes": { recipes: [pancakes, curry] }, "GET /api/list": makeList() });
+    renderWithProviders(<Dashboard />, { route: "/?q=sushi" });
+    expect(await screen.findByText("No recipes match “sushi”.")).toBeInTheDocument();
+    const empty = screen.getByText("No recipes match “sushi”.").closest(".state") as HTMLElement;
+    await userEvent.click(within(empty).getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Pancakes" })).toBeInTheDocument();
+  });
+
+  it("has no Ask the chef buttons in the header or on cards", async () => {
+    mockApi({ "GET /api/recipes": { recipes: [pancakes, curry] }, "GET /api/list": makeList() });
+    renderWithProviders(<Dashboard />);
+    await screen.findByRole("button", { name: "Pancakes" });
+    expect(screen.queryByRole("button", { name: /ask the chef/i })).not.toBeInTheDocument();
   });
 });

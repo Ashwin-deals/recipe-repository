@@ -4,11 +4,14 @@ import { addRecipeToList, deleteRecipe, estimateNutrition, getRecipe, getScaled,
 import { ConfirmButton } from "../components/ConfirmButton";
 import { DietTags } from "../components/DietTags";
 import { Icon } from "../components/Icon";
+import { RecipeCover } from "../components/RecipeCover";
 import { ServingsSelect } from "../components/ServingsSelect";
 import { ErrorState, LoadingState } from "../components/States";
 import { useApi } from "../hooks/useApi";
+import { useChat } from "../hooks/useChat";
 import { useConfig } from "../hooks/useConfig";
 import { usePageTitle } from "../hooks/usePageTitle";
+import { useRecipeChanges, useRecipeLibrary } from "../hooks/useRecipeLibrary";
 import { useShoppingList } from "../hooks/useShoppingList";
 import { useToast } from "../hooks/useToast";
 import { errorMessage } from "../lib/errors";
@@ -19,8 +22,15 @@ export function RecipeDetail() {
   const id = Number(useParams().id);
   const recipe = useApi(`recipe:${id}`, async () => (await getRecipe(id)).recipe);
   usePageTitle(recipe.data?.title ?? "Recipe");
+  const navigate = useNavigate();
 
-  if (recipe.status === "loading") return <LoadingState label="Loading recipe…" />;
+  // The chef (or the drawer) changed or deleted this recipe somewhere else.
+  useRecipeChanges((change) => {
+    if (change.kind === "deleted" && change.id === id) navigate("/");
+    if (change.kind === "saved" && change.replaced && change.recipe.id === id) void recipe.reload();
+  });
+
+  if (recipe.status === "loading") return <LoadingState label="Loading recipe…" kind="block" />;
   if (!recipe.data) {
     return (
       <div className="error-page">
@@ -29,14 +39,17 @@ export function RecipeDetail() {
       </div>
     );
   }
-  return <RecipeView key={recipe.data.id} recipe={recipe.data} />;
+  // Re-key on content so the view resets after the chef replaces this recipe.
+  const data = recipe.data;
+  return <RecipeView key={`${data.id}:${data.title}:${data.ingredients}`} recipe={data} />;
 }
 
 function RecipeView({ recipe }: { recipe: Recipe }) {
   const { ai_enabled: aiEnabled } = useConfig();
   const toast = useToast();
   const shopping = useShoppingList();
-  const navigate = useNavigate();
+  const { openChat } = useChat();
+  const { notify } = useRecipeLibrary();
   const [multiplier, setMultiplier] = useState(1);
   const [lines, setLines] = useState(recipe.lines);
   const [swaps, setSwaps] = useState<Record<number, SubstituteResult | "loading">>({});
@@ -103,7 +116,7 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
     try {
       await deleteRecipe(recipe.id);
       toast.show(`Deleted “${recipe.title}”.`);
-      navigate("/");
+      notify({ kind: "deleted", id: recipe.id }); // RecipeDetail goes back to the recipes
     } catch (err) {
       toast.show(errorMessage(err), { error: true });
     }
@@ -113,15 +126,18 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
   return (
     <article className={`recipe-page cat-${category}`}>
       <header className="recipe-hero">
-        <Link className="link-quiet" to="/">← All recipes</Link>
-        <div className="card-top">
-          <span className={`tag tag-${category}`}>{recipe.category}</span>
-          <span className="meta">
-            <Icon name="clock" /> {recipe.prep_time} min prep
-          </span>
+        <RecipeCover recipe={recipe} size="hero" />
+        <div className="recipe-hero-text">
+          <Link className="link-arrow link-back" to="/">← All recipes</Link>
+          <p className="eyebrow">
+            {recipe.category} · <span className="num">{recipe.prep_time}</span> min prep · <span className="num">{recipe.lines.length}</span> ingredients
+          </p>
+          <h1 className="display">{recipe.title}</h1>
+          <DietTags tags={dietTags} />
+          <button type="button" className="link-arrow btn-link hero-ask" onClick={() => openChat({ recipe })}>
+            <Icon name="chat" /> Ask about this recipe
+          </button>
         </div>
-        <h1>{recipe.title}</h1>
-        <DietTags tags={dietTags} />
       </header>
 
       <div className="recipe-layout">
@@ -132,7 +148,7 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
             </h2>
             <ServingsSelect value={multiplier} onChange={(m) => void changeServings(m)} recipeTitle={recipe.title} />
           </div>
-          <ul className="lines lines-detail" aria-label={`Ingredients for ${recipe.title}`}>
+          <ul className="lines" aria-label={`Ingredients for ${recipe.title}`}>
             {lines.map((line, index) => {
               const swap = swaps[index];
               return (
