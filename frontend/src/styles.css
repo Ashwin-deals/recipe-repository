@@ -260,8 +260,9 @@ main:focus { outline: none; }
 @media (min-width: 760px) {
   body { padding-bottom: 0; }
   .topbar { padding: 8px 32px; gap: 8px 20px; }
-  .nav { position: static; display: flex; gap: 2px; height: auto; padding: 0; background: none; color: var(--ink); border: 0; }
-  .nav-link { flex-direction: row; gap: 8px; min-height: 44px; padding: 0 14px; font-size: 0.95rem; opacity: 1; border: 2px solid transparent; border-radius: 4px; }
+  /* The gap clears the active link's 3px offset shadow, so bordered links never touch. */
+  .nav { position: static; display: flex; gap: 10px; height: auto; padding: 0; background: none; color: var(--ink); border: 0; }
+  .nav-link { flex-direction: row; gap: 8px; min-height: 44px; padding: 0 12px; font-size: 0.95rem; opacity: 1; border: 2px solid transparent; border-radius: 4px; }
   .nav-link:hover { border-color: var(--line); }
   .nav-link.active { background: var(--accent); color: var(--on-accent); border-color: var(--line); box-shadow: 3px 3px 0 var(--shadow); }
   .nav-link.active::before { display: none; }
@@ -890,11 +891,17 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--l
 /* Tablets: the search icon joins the nav row, so the row tightens up to keep everything on one line. */
 @media (min-width: 760px) and (max-width: 1119px) {
   .topbar { gap: 8px 10px; }
+  .nav { gap: 6px; }
   .nav-link { padding: 0 10px; }
+}
+/* Narrow tablets: the wordmark doesn't fit beside four labelled links, so the mark stands alone. */
+@media (min-width: 760px) and (max-width: 819px) {
+  .brand-name { display: none; }
 }
 @media (min-width: 1120px) {
   .brand { margin-right: 0; }
-  .search, .search[data-expanded] { order: 0; flex: 1 1 480px; max-width: 560px; margin: 0 auto; padding: 0; }
+  /* A small basis so the row never wraps; the field still grows to 560px when there is room. */
+  .search, .search[data-expanded] { order: 0; flex: 1 1 260px; max-width: 560px; margin: 0 auto; padding: 0; }
   .search-toggle, .search[data-expanded] .search-toggle, .search-collapse { display: none; }
   .search-field, .search[data-expanded] .search-field { display: flex; }
   .search-kbd { display: grid; }
