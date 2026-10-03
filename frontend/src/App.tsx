@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { CartFab } from "./components/CartFab";
 import { ConfigProvider } from "./components/ConfigProvider";
 import { Nav } from "./components/Nav";
 import { OfflineBanner } from "./components/OfflineBanner";
@@ -48,6 +49,7 @@ function Layout({ children }: { children: ReactNode }) {
       <main id="main" className="wrap" ref={main} tabIndex={-1}>
         {children}
       </main>
+      <CartFab />
     </>
   );
 }

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { addToPlan, buildPlanList, clearPlan, getPlanner, removeFromPlan } from "../api/endpoints";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { Icon } from "../components/Icon";
+import { PageHeader } from "../components/PageHeader";
 import { PlannerGrid } from "../components/PlannerGrid";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { useApi } from "../hooks/useApi";
@@ -70,16 +71,12 @@ export function Planner() {
 
   return (
     <div className="planner-page">
-      <div className="pane-head">
-        <div>
-          <p className="eyebrow">Weekly planner</p>
-          <h1>Plan the week, shop once</h1>
-        </div>
+      <PageHeader eyebrow="No. 03 · Weekly planner" title="Plan the week, shop once">
         <button className="btn btn-primary" type="button" onClick={build} disabled={busy || plannedMeals === 0}>
           <Icon name="cart" />
           <span>Build shopping list</span>
         </button>
-      </div>
+      </PageHeader>
 
       {recipes.data && recipes.data.length > 0 && (
         <form className="panel plan-form" onSubmit={add}>
@@ -91,7 +88,7 @@ export function Planner() {
               ))}
             </select>
           </div>
-          <div className="field field-grow">
+          <div className="field">
             <label htmlFor="plan-recipe">Recipe</label>
             <select id="plan-recipe" value={selectedRecipe} onChange={(event) => setRecipeId(event.target.value)}>
               {recipes.data.map((recipe) => (
@@ -118,12 +115,12 @@ export function Planner() {
         </form>
       )}
       {recipes.data?.length === 0 && (
-        <EmptyState>
+        <EmptyState illustration="calendar">
           <p>Add some recipes first, then plan your week here.</p>
         </EmptyState>
       )}
 
-      {planner.status === "loading" && <LoadingState label="Loading your week…" />}
+      {planner.status === "loading" && <LoadingState label="Loading your week…" kind="cards" />}
       {planner.status === "error" && (
         <ErrorState message={planner.error ?? "Couldn't load the planner."} onRetry={() => void planner.reload()} />
       )}

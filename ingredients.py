@@ -698,3 +698,16 @@ def basic_substitutes(ingredient: str) -> list[dict]:
                        key=len, reverse=True)
         match = _SUBSTITUTIONS[known[0]] if known else []
     return [{"swap": swap, "note": note} for swap, note in match]
+
+
+def substitutes_mentioned(text: str, limit: int = 2) -> list[tuple[str, list[dict]]]:
+    """Built-in swaps for known ingredients named in free text, e.g. "no butter, what now?"."""
+    text = text.lower()
+    found = []
+    # Longest names first, so "brown sugar" wins over "sugar".
+    for name in sorted(_SUBSTITUTIONS, key=len, reverse=True):
+        if re.search(rf"\b{re.escape(name)}(e?s)?\b", text) and not any(name in other for other, _ in found):
+            found.append((name, [{"swap": swap, "note": note} for swap, note in _SUBSTITUTIONS[name]]))
+        if len(found) >= limit:
+            break
+    return found

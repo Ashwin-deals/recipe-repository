@@ -18,7 +18,7 @@ type Status =
  * Snap-a-recipe: a photo/screenshot and/or pasted text is sent to /api/import and the result
  * handed to the form for review. Nothing is saved here.
  */
-export function ImportPanel({ onImported }: { onImported: (result: ImportResult) => void }) {
+export function ImportPanel({ onImported }: { onImported: (result: ImportResult, fromPhoto: boolean) => void }) {
   const { ai_enabled: aiEnabled, max_image_bytes: maxBytes } = useConfig();
   const id = useId();
   const [text, setText] = useState("");
@@ -60,7 +60,7 @@ export function ImportPanel({ onImported }: { onImported: (result: ImportResult)
     try {
       const result = await importRecipe({ image: file, text });
       setStatus({ kind: "success", message: result.message });
-      onImported(result);
+      onImported(result, file !== null);
     } catch (err) {
       setStatus({ kind: "error", message: errorMessage(err) });
     }

@@ -182,12 +182,12 @@ describe("Saving the recipe", () => {
     });
     const { onSaved } = renderForm();
 
+    await userEvent.type(screen.getByLabelText("Prep time (minutes)"), "5");
     await userEvent.click(screen.getByRole("button", { name: "Save recipe" }));
     expect(await screen.findByText("Give the recipe a title.")).toBeInTheDocument();
     expect(screen.getByLabelText("Title")).toHaveAttribute("aria-invalid", "true");
 
     await userEvent.type(screen.getByLabelText("Title"), "Toast");
-    await userEvent.type(screen.getByLabelText("Prep time (minutes)"), "5");
     await userEvent.selectOptions(screen.getByLabelText("Category"), "Breakfast");
     await userEvent.type(screen.getByLabelText(/^Ingredients/), "2 slices bread");
     await userEvent.click(screen.getByRole("button", { name: "Save recipe" }));
@@ -196,5 +196,80 @@ describe("Saving the recipe", () => {
     expect(api.callsTo("POST", "/api/recipes")[1]?.body).toEqual({
       title: "Toast", prep_time: "5", category: "Breakfast", ingredients: "2 slices bread",
     });
+  });
+});
+
+
+describe("Prep time after an import", () => {
+  const withPrep = (prep: number | null) => ({ ...IMPORTED, recipe: { ...IMPORTED.recipe, prep_time: prep } });
+
+  it("leaves prep time empty and asks for it when the text had none", async () => {
+    mockApi({ "GET /api/list": makeList(), "POST /api/import": withPrep(null) });
+    renderForm();
+    await userEvent.type(screen.getByLabelText("Or paste recipe text"), "Banana Bread");
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await screen.findByText("Imported with AI, please review before saving.");
+    const prep = screen.getByLabelText("Prep time (minutes)");
+    expect(prep).toHaveValue(null);
+    expect(prep).toHaveAttribute("placeholder", "e.g. 20");
+    const hint = screen.getByText("No prep time found in the text. Please enter it.");
+    expect(prep).toHaveAttribute("aria-describedby", hint.id);
+    expect(screen.getByLabelText("Title")).toHaveValue("Banana Bread"); // the rest is still filled in
+
+    await userEvent.type(prep, "25");
+    expect(screen.queryByText(/No prep time found/)).not.toBeInTheDocument();
+    expect(prep).toHaveValue(25);
+  });
+
+  it("treats a prep time of 0 from a photo as not found", async () => {
+    mockApi({ "GET /api/list": makeList(), "POST /api/import": withPrep(0) });
+    renderForm();
+    await userEvent.upload(screen.getByLabelText("Choose image"), jpeg());
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    expect(await screen.findByText("No prep time found in the photo. Please enter it.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Prep time (minutes)")).toHaveValue(null);
+  });
+
+  it("fills in a prep time the import did find, without a hint", async () => {
+    mockApi({ "GET /api/list": makeList(), "POST /api/import": withPrep(40) });
+    renderForm();
+    await userEvent.type(screen.getByLabelText("Or paste recipe text"), "Banana Bread");
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await screen.findByText("Imported with AI, please review before saving.");
+    expect(screen.getByLabelText("Prep time (minutes)")).toHaveValue(40);
+    expect(screen.queryByText(/No prep time found/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a prep time the user already typed and shows no hint", async () => {
+    mockApi({ "GET /api/list": makeList(), "POST /api/import": withPrep(null) });
+    renderForm();
+    await userEvent.type(screen.getByLabelText("Prep time (minutes)"), "30");
+    await userEvent.type(screen.getByLabelText("Or paste recipe text"), "Banana Bread");
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+
+    await screen.findByText("Imported with AI, please review before saving.");
+    expect(screen.getByLabelText("Prep time (minutes)")).toHaveValue(30);
+    expect(screen.queryByText(/No prep time found/)).not.toBeInTheDocument();
+  });
+
+  it("will not save without a prep time and says why", async () => {
+    const api = mockApi({ "GET /api/list": makeList(), "POST /api/import": withPrep(null) });
+    const { onSaved } = renderForm();
+    await userEvent.type(screen.getByLabelText("Or paste recipe text"), "Banana Bread");
+    await userEvent.click(screen.getByRole("button", { name: "Import" }));
+    await screen.findByText(/No prep time found/);
+
+    await userEvent.click(screen.getByRole("button", { name: "Save recipe" }));
+
+    expect(await screen.findByText("Enter the prep time in minutes (0 to 1440).")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Please fix the highlighted fields.");
+    const prep = screen.getByLabelText("Prep time (minutes)");
+    expect(prep).toHaveAttribute("aria-invalid", "true");
+    expect(prep).toHaveFocus();
+    expect(api.callsTo("POST", "/api/recipes")).toHaveLength(0);
+    expect(onSaved).not.toHaveBeenCalled();
   });
 });

@@ -18,7 +18,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = "GET" | "POST" | "DELETE";
+type Method = "GET" | "POST" | "PUT" | "DELETE";
 
 interface RequestOptions {
   method?: Method;
@@ -85,6 +85,7 @@ async function request<T>(path: string, options: RequestOptions = {}, retried = 
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, json: unknown = {}) => request<T>(path, { method: "POST", json }),
+  put: <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json }),
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", form }),
   delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
