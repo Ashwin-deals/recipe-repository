@@ -515,14 +515,22 @@ html.has-drawer .cart-fab { display: none; }
   animation: pop 0.25s var(--ease);
 }
 .item.is-pending .box { border-style: dashed; }
-.item-row { display: flex; align-items: flex-start; gap: 2px; }
+.item-row { display: flex; align-items: flex-start; gap: 10px; }
 .item-row .item { flex: 1; min-width: 0; }
 .item-edit {
-  display: grid; place-items: center; flex: none; width: 44px; height: 44px; margin-top: 4px;
+  display: grid; place-items: center; flex: none; width: 40px; height: 40px; margin-top: 6px;
   border: 0; border-radius: 4px; background: transparent; color: var(--paper-muted); cursor: pointer;
+  transition: opacity 0.15s ease;
 }
-.item-edit .icon { width: 18px; height: 18px; }
+.item-edit .icon { width: 17px; height: 17px; }
 .item-edit:hover, .item-edit[aria-expanded="true"] { color: var(--paper-ink); background: rgba(200, 242, 92, 0.45); }
+/* Drawn inside the button so the ring never covers the amount next to it. */
+.item-edit:focus-visible { outline: 2px solid var(--paper-ink); outline-offset: -2px; }
+/* With a mouse, keep the pencils quiet until their row is hovered; touch screens always show them. */
+@media (hover: hover) {
+  .item-edit { opacity: 0.35; }
+  .receipt-row:hover .item-edit, .item-edit:focus-visible, .item-edit[aria-expanded="true"] { opacity: 1; }
+}
 .amount-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px 36px; }
 .receipt .amount-editor input {
   flex: 1 1 140px; min-width: 0; height: 44px; padding: 0 8px; border: 0; border-bottom: 2px solid var(--paper-ink);
