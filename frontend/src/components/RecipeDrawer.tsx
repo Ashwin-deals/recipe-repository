@@ -106,11 +106,11 @@ export function RecipeDrawer({ recipe, onClose, onDeleted, onAsk }: RecipeDrawer
             <span>{adding ? "Adding…" : "Add to list"}</span>
           </button>
           <div className="drawer-links">
-            <Link className="link-arrow" to={`/recipes/${recipe.id}`}>
+            <Link className="link-arrow" to={`/recipes/${recipe.id}`} onClick={onClose}>
               Full recipe, nutrition &amp; swaps <Icon name="arrow" />
             </Link>
             <button type="button" className="link-arrow btn-link" onClick={() => onAsk(recipe)}>
-              <Icon name="chat" /> Ask the chef
+              <Icon name="chat" /> Ask about this recipe
             </button>
             <ConfirmButton className="btn-text" confirmLabel="Tap again to delete" onConfirm={() => void remove()}>
               Delete

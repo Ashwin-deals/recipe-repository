@@ -6,6 +6,8 @@ import { resetCsrfToken } from "../api/client";
 afterEach(() => {
   cleanup();
   localStorage.clear();
+  sessionStorage.clear();
+  document.documentElement.className = "";
   resetCsrfToken();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

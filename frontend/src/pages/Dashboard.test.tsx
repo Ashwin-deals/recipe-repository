@@ -90,22 +90,41 @@ describe("Dashboard", () => {
     expect(screen.getByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();
   });
 
-  it("opens Ask the chef for a recipe from its card, and in general mode from the header", async () => {
-    const api = mockApi({
-      "GET /api/recipes": { recipes: [pancakes, curry] },
+  it("filters the grid by ?q= together with the category, and clears the search", async () => {
+    const pasta = makeRecipe({ id: 3, title: "Garlic Pasta", category: "Dinner", lines: ["200 g pasta", "2 cloves garlic"], diet_tags: [] });
+    mockApi({
+      "GET /api/recipes": { recipes: [pancakes, curry, pasta] },
+      "GET /api/recipes?category=Dinner": { recipes: [curry, pasta] },
       "GET /api/list": makeList(),
-      "POST /api/chat": { reply: "Use oat milk.", proposal: null, shopping_items: [], source: "gemini" },
     });
-    renderWithProviders(<Dashboard />);
-    await userEvent.click(await screen.findByRole("button", { name: "Ask the chef about Chicken Curry" }));
-    const chat = screen.getByRole("dialog", { name: "Ask the chef" });
-    expect(within(chat).getByText("About: Chicken Curry")).toBeInTheDocument();
-    await userEvent.type(within(chat).getByLabelText("Message the chef"), "dairy-free?{Enter}");
-    expect(await within(chat).findByText("Use oat milk.")).toBeInTheDocument();
-    expect(api.callsTo("POST", "/api/chat")[0]?.body).toMatchObject({ recipe_id: 2 });
+    renderWithProviders(<Dashboard />, { route: "/?q=chicken" });
+    expect(await screen.findByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Showing/)).toHaveTextContent("Showing 1 of 3 recipes for “chicken”");
 
-    await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("button", { name: "Ask the chef" }));
-    expect(screen.getByText("General kitchen help")).toBeInTheDocument();
+    // Changing the category keeps the search.
+    await userEvent.click(screen.getByRole("button", { name: "Dinner" }));
+    expect(await screen.findByText(/Showing/)).toHaveTextContent("Showing 1 of 2 dinner recipes for “chicken”");
+    expect(screen.queryByRole("button", { name: "Garlic Pasta" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Garlic Pasta" })).toBeInTheDocument();
+    expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
+  });
+
+  it("shows an empty state when the search matches nothing", async () => {
+    mockApi({ "GET /api/recipes": { recipes: [pancakes, curry] }, "GET /api/list": makeList() });
+    renderWithProviders(<Dashboard />, { route: "/?q=sushi" });
+    expect(await screen.findByText("No recipes match “sushi”.")).toBeInTheDocument();
+    const empty = screen.getByText("No recipes match “sushi”.").closest(".state") as HTMLElement;
+    await userEvent.click(within(empty).getByRole("button", { name: "Clear search" }));
+    expect(await screen.findByRole("button", { name: "Pancakes" })).toBeInTheDocument();
+  });
+
+  it("has no Ask the chef buttons in the header or on cards", async () => {
+    mockApi({ "GET /api/recipes": { recipes: [pancakes, curry] }, "GET /api/list": makeList() });
+    renderWithProviders(<Dashboard />);
+    await screen.findByRole("button", { name: "Pancakes" });
+    expect(screen.queryByRole("button", { name: /ask the chef/i })).not.toBeInTheDocument();
   });
 });

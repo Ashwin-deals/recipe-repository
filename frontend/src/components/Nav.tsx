@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import { useShoppingList } from "../hooks/useShoppingList";
+import { GlobalSearch } from "./GlobalSearch";
 import { Icon, type IconName } from "./Icon";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -22,6 +23,7 @@ export function Nav() {
           Cart<span>Chef</span>
         </span>
       </NavLink>
+      <GlobalSearch />
       <nav className="nav" aria-label="Main">
         {LINKS.map((link) => (
           <NavLink key={link.to} className="nav-link" to={link.to} end={link.to === "/"}

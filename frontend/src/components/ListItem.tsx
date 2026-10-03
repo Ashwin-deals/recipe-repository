@@ -5,7 +5,7 @@ import type { ViewItem } from "../lib/listView";
 export function ListItem({ item, index, onToggle }: { item: ViewItem; index: number; onToggle: (item: ViewItem) => void }) {
   const classes = ["item", item.checked && "is-checked", item.pending && "is-pending"].filter(Boolean).join(" ");
   return (
-    <li className="receipt-row" style={{ "--i": Math.min(index, 14) } as CSSProperties}>
+    <li className="receipt-row" data-item-id={item.id} style={{ "--i": Math.min(index, 14) } as CSSProperties}>
       <button type="button" className={classes} aria-pressed={item.checked} aria-label={item.label} onClick={() => onToggle(item)}>
         <span className="box" aria-hidden="true" />
         <span className="item-main">
