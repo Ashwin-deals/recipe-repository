@@ -429,6 +429,33 @@ def api_check(item_id: int):
     return jsonify(**result, counts=shopping.counts(db))
 
 
+@bp.post("/api/list/<int:item_id>/amount")
+def api_set_amount(item_id: int):
+    amount = json_body().get("amount")
+    if not isinstance(amount, str):
+        abort(400, "“amount” must be text, e.g. “1” or “2 cups”.")
+    if len(amount.strip()) > ingredients.MAX_LINE_LENGTH:
+        abort(400, f"Keep amounts under {ingredients.MAX_LINE_LENGTH} characters.")
+    db = get_db()
+    try:
+        item = shopping.set_amount(db, item_id, amount)
+    except shopping.AmountError as exc:
+        abort(400, str(exc))
+    if item is None:
+        abort(404, "That item is no longer on the list.")
+    db.commit()
+    return jsonify(item=item, counts=shopping.counts(db))
+
+
+@bp.delete("/api/list/<int:item_id>")
+def api_remove_item(item_id: int):
+    db = get_db()
+    if not shopping.remove(db, item_id):
+        abort(404, "That item is no longer on the list.")
+    db.commit()
+    return jsonify(removed=item_id, counts=shopping.counts(db))
+
+
 @bp.post("/api/list/clear")
 def api_clear():
     scope = json_body().get("scope", "all")

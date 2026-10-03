@@ -13,6 +13,9 @@ export interface ShoppingListApi {
   toggle: (item: ViewItem) => void;
   clear: (scope: "all" | "checked") => Promise<number>;
   addItem: (line: string) => Promise<AddResult>;
+  /** Replace an item's amount with typed text ("1", "2 cups", or "" for none). Rejects with ApiError on bad input. */
+  setAmount: (id: number, amount: string) => Promise<void>;
+  remove: (id: number) => Promise<void>;
 }
 
 export const ShoppingListContext = createContext<ShoppingListApi | null>(null);

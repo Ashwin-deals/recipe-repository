@@ -103,6 +103,45 @@ def set_checked(conn: sqlite3.Connection, item_id: int, checked: bool) -> dict |
     return {"id": item_id, "checked": checked}
 
 
+class AmountError(ValueError):
+    """The text typed as a new amount isn't one ("lots", "0", "2 cups sugar" on the flour line)."""
+
+
+def set_amount(conn: sqlite3.Connection, item_id: int, amount: str) -> dict | None:
+    """Replace an item's amount with what the user typed: "1", "2 cups", "1 apple" or "" for none.
+
+    Returns the updated item, or None if it no longer exists. Raises AmountError for bad input.
+    """
+    row = conn.execute("SELECT * FROM shopping_list WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        return None
+    text = ing.normalize_line(amount)
+    qty = unit = None
+    if text:
+        parsed = ing.parse_line(text)
+        # The item's own name may follow the amount ("1 apple"), but nothing else.
+        if parsed.shopping_qty is None or (parsed.text and ing.merge_key(parsed.text) != row["item_key"]):
+            raise AmountError(f"Type an amount like 1, 2 cups or 1/2 tsp for {row['name']}.")
+        qty, unit = ing.normalize(parsed.shopping_qty, parsed.unit, compound=True)
+    conn.execute(
+        "UPDATE shopping_list SET qty = ?, unit = ?, aisle = ? WHERE id = ?",
+        (str(qty) if qty is not None else None, unit, ing.aisle_for(row["item_key"], unit), item_id),
+    )
+    database.log_event(conn, "item_amount_changed", {
+        "item_id": item_id, "item_key": row["item_key"], "qty": str(qty) if qty is not None else None, "unit": unit,
+    })
+    return _view(conn.execute("SELECT * FROM shopping_list WHERE id = ?", (item_id,)).fetchone())
+
+
+def remove(conn: sqlite3.Connection, item_id: int) -> bool:
+    row = conn.execute("SELECT item_key FROM shopping_list WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        return False
+    conn.execute("DELETE FROM shopping_list WHERE id = ?", (item_id,))
+    database.log_event(conn, "item_removed", {"item_id": item_id, "item_key": row["item_key"]})
+    return True
+
+
 def clear(conn: sqlite3.Connection, *, only_checked: bool = False) -> int:
     if only_checked:
         removed = conn.execute("DELETE FROM shopping_list WHERE checked = 1").rowcount

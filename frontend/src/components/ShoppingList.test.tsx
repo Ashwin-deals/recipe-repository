@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { loadQueue } from "../lib/offlineQueue";
 import { makeItem, makeList } from "../test/fixtures";
-import { mockApi, networkDown } from "../test/mockApi";
+import { mockApi, networkDown, reply } from "../test/mockApi";
 import { renderWithProviders } from "../test/render";
 import { ShoppingList } from "./ShoppingList";
 
@@ -124,5 +124,54 @@ describe("ShoppingList", () => {
     expect(await screen.findByRole("button", { name: /2 lemons/ })).toBeInTheDocument();
     expect(api.callsTo("POST", "/api/list/items")[0]?.body).toEqual({ line: "2 lemons" });
     expect(screen.getByLabelText("Add an item")).toHaveValue("");
+  });
+
+  it("changes an item's amount and removes items", async () => {
+    let items = [makeItem({ id: 7, label: "6 apples", amount: "6", name: "apples", aisle: "Produce" }), flour];
+    const api = mockApi({
+      "GET /api/list": () => makeList(items),
+      "POST /api/list/7/amount": (body) => {
+        const { amount } = body as { amount: string };
+        if (amount === "lots") return reply(400, { error: "Type an amount like 1, 2 cups or 1/2 tsp for apples." });
+        items = items.map((i) => (i.id === 7 ? { ...i, label: "1 apple", amount: "1", name: "apple" } : i));
+        return { item: items[0], counts: makeList(items).counts };
+      },
+      "DELETE /api/list/5": () => {
+        items = items.filter((i) => i.id !== 5);
+        return { removed: 5, counts: makeList(items).counts };
+      },
+    });
+    renderWithProviders(<ShoppingList variant="full" />);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Change amount of apples" }));
+    const input = screen.getByLabelText("Amount of apples");
+    expect(input).toHaveValue("6");
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "lots{Enter}");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Type an amount like 1");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+
+    await userEvent.clear(input);
+    await userEvent.type(input, "1{Enter}");
+    expect(await screen.findByRole("button", { name: "1 apple" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.queryByLabelText(/Amount of/)).not.toBeInTheDocument();
+    expect(api.callsTo("POST", "/api/list/7/amount").at(-1)?.body).toEqual({ amount: "1" });
+
+    await userEvent.click(screen.getByRole("button", { name: "Change amount of flour" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: /2 cups flour/ })).not.toBeInTheDocument());
+    expect(api.callsTo("DELETE", "/api/list/5")).toHaveLength(1);
+  });
+
+  it("closes the amount editor with Escape without saving", async () => {
+    const api = mockApi({ "GET /api/list": makeList([flour]) });
+    renderWithProviders(<ShoppingList variant="full" />);
+    const pencil = await screen.findByRole("button", { name: "Change amount of flour" });
+    await userEvent.click(pencil);
+    await userEvent.type(screen.getByLabelText("Amount of flour"), "{Escape}");
+    expect(screen.queryByLabelText("Amount of flour")).not.toBeInTheDocument();
+    expect(pencil).toHaveFocus();
+    expect(api.calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 });

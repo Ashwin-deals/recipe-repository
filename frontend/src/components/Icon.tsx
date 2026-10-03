@@ -47,6 +47,7 @@ const PATHS = {
       <circle cx="12" cy="13.5" r="3.2" />
     </>
   ),
+  edit: <path d="M4 20h4L19 9l-4-4L4 16zM13.5 6.5l4 4" />,
   trash: <path d="M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5" />,
   swap: <path d="M5 8h13l-3.5-3.5M19 16H6l3.5 3.5" />,
   sparkle: <path d="M12 3.5 13.9 9l5.6 2-5.6 2L12 18.5 10.1 13l-5.6-2 5.6-2z" />,

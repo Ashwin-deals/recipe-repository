@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 import database
 import shopping
 
@@ -190,3 +192,39 @@ def test_seed_recipes_demonstrate_merging(tmp_path):
         assert any(label.endswith("flour") for label in found)
     finally:
         conn.close()
+
+
+def item_id(db, key):
+    return db.execute("SELECT id FROM shopping_list WHERE item_key = ?", (key,)).fetchone()["id"]
+
+
+def test_set_amount_replaces_the_quantity(db):
+    shopping.add_line(db, "6 apples", source="Warm Apple Crumble")
+    for amount, label in [("1", "1 apple"), ("3 apples", "3 apples"), ("2 lb", "2 lb apples"), ("", "apples")]:
+        assert shopping.set_amount(db, item_id(db, "apple"), amount)["label"] == label
+    item = shopping.set_amount(db, item_id(db, "apple"), "1")
+    assert item["sources"] == ["Warm Apple Crumble"] and item["checked"] is False
+
+
+def test_set_amount_normalizes_units(db):
+    shopping.add_line(db, "1/2 cup butter")
+    assert shopping.set_amount(db, item_id(db, "butter"), "8 tbsp")["label"] == "1/2 cup butter"
+
+
+@pytest.mark.parametrize("amount", ["lots", "0", "2 cups sugar", "-1"])
+def test_set_amount_rejects_text_that_is_not_an_amount(db, amount):
+    shopping.add_line(db, "1/2 cup butter")
+    with pytest.raises(shopping.AmountError):
+        shopping.set_amount(db, item_id(db, "butter"), amount)
+    assert labels(db) == ["1/2 cup butter"]
+
+
+def test_set_amount_and_remove_on_missing_items(db):
+    assert shopping.set_amount(db, 999, "1") is None
+    assert shopping.remove(db, 999) is False
+
+
+def test_remove_deletes_one_item(db):
+    shopping.add_lines(db, ["6 apples", "1 cup milk"])
+    assert shopping.remove(db, item_id(db, "apple")) is True
+    assert labels(db) == ["1 cup milk"]

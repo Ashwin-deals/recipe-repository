@@ -1,5 +1,6 @@
 import type {
   AddResult, AppConfig, BuildResult, Category, ChatResult, ChatTurn, Counts, ImportResult, InsightsData, ListData,
+  ListItem,
   NutritionResult, PlanData, Recipe, ScaledLines, SubstituteResult,
 } from "../types";
 import { api } from "./client";
@@ -39,6 +40,11 @@ export const addListItem = (line: string) => api.post<AddResult>("/api/list/item
 
 export const setItemChecked = (id: number, checked: boolean) =>
   api.post<{ id: number; checked: boolean; counts: Counts }>(`/api/list/${id}/check`, { checked });
+
+export const setItemAmount = (id: number, amount: string) =>
+  api.post<{ item: ListItem; counts: Counts }>(`/api/list/${id}/amount`, { amount });
+
+export const removeListItem = (id: number) => api.delete<{ removed: number; counts: Counts }>(`/api/list/${id}`);
 
 export const clearList = (scope: "all" | "checked") =>
   api.post<{ removed: number; scope: string; counts: Counts }>("/api/list/clear", { scope });

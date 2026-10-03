@@ -226,6 +226,31 @@ def test_check_and_uncheck_persist(client, db):
     assert db.execute("SELECT checked FROM shopping_list").fetchone()[0] == 0
 
 
+def test_change_an_items_amount(client, db):
+    shopping.add_line(db, "6 apples")
+    db.commit()
+    item_id = db.execute("SELECT id FROM shopping_list").fetchone()[0]
+    response = client.post(f"/api/list/{item_id}/amount", json={"amount": "1"})
+    assert response.status_code == 200
+    assert response.json["item"]["label"] == "1 apple" and response.json["counts"]["total"] == 1
+    assert client.get("/api/list").json["groups"][0]["items"][0]["label"] == "1 apple"
+
+    bad = client.post(f"/api/list/{item_id}/amount", json={"amount": "lots"})
+    assert bad.status_code == 400 and "apples" in bad.json["error"]
+    assert client.post(f"/api/list/{item_id}/amount", json={"amount": 1}).status_code == 400
+    assert client.post(f"/api/list/{item_id}/amount", json={"amount": "1" * 201}).status_code == 400
+    assert client.post("/api/list/999/amount", json={"amount": "1"}).status_code == 404
+
+
+def test_remove_one_item(client, db):
+    shopping.add_lines(db, ["6 apples", "1 cup milk"])
+    db.commit()
+    item_id = db.execute("SELECT id FROM shopping_list WHERE item_key = 'apple'").fetchone()[0]
+    response = client.delete(f"/api/list/{item_id}")
+    assert response.status_code == 200 and response.json["counts"]["total"] == 1
+    assert client.delete(f"/api/list/{item_id}").status_code == 404
+
+
 def test_check_validation(client, db):
     shopping.add_line(db, "2 eggs")
     db.commit()

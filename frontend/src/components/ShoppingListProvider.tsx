@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { addListItem, clearList, getList, setItemChecked } from "../api/endpoints";
+import { addListItem, clearList, getList, removeListItem, setItemAmount, setItemChecked } from "../api/endpoints";
 import type { LoadStatus } from "../hooks/useApi";
 import { ShoppingListContext, type ShoppingListApi } from "../hooks/useShoppingList";
 import { useToast } from "../hooks/useToast";
@@ -103,6 +103,29 @@ export function ShoppingListProvider({ children }: { children: ReactNode }) {
     [reload],
   );
 
+  const setAmount = useCallback(
+    async (id: number, amount: string) => {
+      await setItemAmount(id, amount);
+      await reload();
+    },
+    [reload],
+  );
+
+  const remove = useCallback(
+    async (id: number) => {
+      await removeListItem(id);
+      // A queued offline tick for this item has nothing left to apply to.
+      const queue = loadQueue();
+      if (String(id) in queue) {
+        const rest = Object.fromEntries(Object.entries(queue).filter(([key]) => key !== String(id)));
+        saveQueue(rest);
+        setPending(rest);
+      }
+      await reload();
+    },
+    [reload],
+  );
+
   const value = useMemo<ShoppingListApi>(() => {
     const view = data ? applyPending(data, pending) : { groups: [], counts: { total: 0, checked: 0, open: 0 } };
     return {
@@ -114,8 +137,10 @@ export function ShoppingListProvider({ children }: { children: ReactNode }) {
       toggle,
       clear,
       addItem,
+      setAmount,
+      remove,
     };
-  }, [data, pending, status, error, reload, toggle, clear, addItem]);
+  }, [data, pending, status, error, reload, toggle, clear, addItem, setAmount, remove]);
 
   return <ShoppingListContext.Provider value={value}>{children}</ShoppingListContext.Provider>;
 }
