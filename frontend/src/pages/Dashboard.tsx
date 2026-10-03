@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CategoryFilter } from "../components/CategoryFilter";
+import { ChatPanel } from "../components/ChatPanel";
 import { Icon } from "../components/Icon";
+import { PageHeader } from "../components/PageHeader";
 import { RecipeCard } from "../components/RecipeCard";
+import { RecipeDrawer } from "../components/RecipeDrawer";
 import { RecipeForm } from "../components/RecipeForm";
 import { ShoppingList } from "../components/ShoppingList";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { useRecipes } from "../hooks/useRecipes";
 import { useToast } from "../hooks/useToast";
-import type { Category } from "../types";
+import type { Category, Recipe } from "../types";
 
 const CATEGORIES: readonly string[] = ["Breakfast", "Lunch", "Dinner", "Dessert"];
 
@@ -24,22 +27,31 @@ export function Dashboard() {
   const category = toCategory(params.get("category"));
   const recipes = useRecipes(category);
   const [showForm, setShowForm] = useState(false);
+  const [open, setOpen] = useState<Recipe | null>(null);
+  // null: closed; { recipe: null }: general chat; { recipe }: chat about that recipe.
+  const [chat, setChat] = useState<{ recipe: Recipe | null } | null>(null);
+  const askAbout = (recipe: Recipe | null) => {
+    setOpen(null);
+    setChat({ recipe });
+  };
+
+  const newRecipeButton = (label: string) => (
+    <button className="btn btn-primary" type="button" onClick={() => setShowForm(true)}>
+      <Icon name="plus" />
+      <span>{label}</span>
+    </button>
+  );
 
   return (
     <div className="dashboard">
-      <section className="pane pane-recipes" aria-labelledby="recipes-heading">
-        <div className="pane-head">
-          <div>
-            <p className="eyebrow">Recipe box</p>
-            <h1 id="recipes-heading">What's cooking this week?</h1>
-          </div>
-          {!showForm && (
-            <button className="btn btn-primary" type="button" onClick={() => setShowForm(true)}>
-              <Icon name="plus" />
-              <span>New recipe</span>
-            </button>
-          )}
-        </div>
+      <section className="pane-recipes" aria-labelledby="recipes-heading">
+        <PageHeader eyebrow="No. 01 · Recipe box" title="What's cooking this week?" id="recipes-heading">
+          <button className="btn btn-ghost" type="button" onClick={() => askAbout(null)}>
+            <Icon name="chat" />
+            <span>Ask the chef</span>
+          </button>
+          {!showForm && newRecipeButton("New recipe")}
+        </PageHeader>
 
         {showForm && (
           <RecipeForm
@@ -57,37 +69,50 @@ export function Dashboard() {
           onChange={(next) => setParams(next ? { category: next } : {}, { replace: true })}
         />
 
-        {recipes.status === "loading" && <LoadingState label="Loading recipes…" />}
+        {recipes.status === "loading" && <LoadingState label="Loading recipes…" kind="cards" />}
         {recipes.status === "error" && (
           <ErrorState message={recipes.error ?? "Couldn't load recipes."} onRetry={() => void recipes.reload()} />
         )}
         {recipes.data && recipes.data.length > 0 && (
-          <div className="card-grid">
-            {recipes.data.map((recipe) => (
-              <RecipeCard
-                key={recipe.id}
-                recipe={recipe}
-                onDeleted={(id) => recipes.setData((current) => current && current.filter((r) => r.id !== id))}
-              />
+          <div className="recipe-grid">
+            {recipes.data.map((recipe, index) => (
+              <RecipeCard key={recipe.id} recipe={recipe} index={index} onOpen={setOpen} onAsk={askAbout} />
             ))}
           </div>
         )}
         {recipes.data?.length === 0 && (
-          <EmptyState>
+          <EmptyState illustration="pot">
             <p>{category ? `No ${category.toLowerCase()} recipes yet.` : "Your recipe box is empty."}</p>
-            {!showForm && (
-              <button className="btn btn-primary" type="button" onClick={() => setShowForm(true)}>
-                <Icon name="plus" />
-                <span>Add a recipe</span>
-              </button>
-            )}
+            {!showForm && newRecipeButton("Add a recipe")}
           </EmptyState>
         )}
       </section>
 
-      <aside className="pane pane-list" aria-label="Shopping list">
+      <aside className="pane-list" aria-label="Shopping list">
         <ShoppingList variant="panel" />
       </aside>
+
+      {open && (
+        <RecipeDrawer
+          key={open.id}
+          recipe={open}
+          onClose={() => setOpen(null)}
+          onDeleted={(id) => {
+            setOpen(null);
+            recipes.setData((current) => current && current.filter((r) => r.id !== id));
+          }}
+          onAsk={askAbout}
+        />
+      )}
+
+      {chat && (
+        <ChatPanel
+          key={chat.recipe?.id ?? "general"}
+          recipe={chat.recipe}
+          onClose={() => setChat(null)}
+          onRecipeSaved={() => void recipes.reload()}
+        />
+      )}
     </div>
   );
 }

@@ -7,8 +7,12 @@ import logging
 import os
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from flask import has_request_context
 from google import genai
+from google.genai import errors
+from werkzeug.datastructures import FileStorage
 
 import database
 import gcp
@@ -30,10 +34,14 @@ def ai_client(ai_app):
 
 
 class FakeGenaiClient:
-    """Replaces google.genai.Client. Records constructor kwargs; replies with queued text."""
+    """Replaces google.genai.Client. Records constructor kwargs and requests.
+
+    Queue replies as text, a response object (e.g. a blocked one), or an exception to raise.
+    """
 
     instances: list = []
     replies: list = []
+    requests: list = []
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -41,15 +49,20 @@ class FakeGenaiClient:
         self.models = SimpleNamespace(generate_content=self._generate)
 
     def _generate(self, *, model, contents, config):
+        FakeGenaiClient.requests.append({"model": model, "contents": contents, "config": config})
         reply = FakeGenaiClient.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return SimpleNamespace(text=reply)
+        return SimpleNamespace(text=reply) if isinstance(reply, str) else reply
+
+
+def api_error(cls, code, status, message="error from Google"):
+    return cls(code, {"error": {"code": code, "status": status, "message": message}})
 
 
 @pytest.fixture
 def fake_sdk(monkeypatch):
-    FakeGenaiClient.instances, FakeGenaiClient.replies = [], []
+    FakeGenaiClient.instances, FakeGenaiClient.replies, FakeGenaiClient.requests = [], [], []
     monkeypatch.setattr(genai, "Client", FakeGenaiClient)
     monkeypatch.setattr(gcp, "_clients", {})
     return FakeGenaiClient
@@ -101,6 +114,8 @@ def test_settings_from_env(tmp_path, monkeypatch):
     ({"GEMINI_MODEL": "m"}, "disabled"),
     ({"GEMINI_API_KEY": "k"}, "disabled"),  # no model name configured
     ({"GEMINI_API_KEY": "k", "GEMINI_MODEL": "m", "AI_ENABLED": False}, "disabled"),
+    ({"GEMINI_API_KEY": "k", "GEMINI_MODEL": "m", "GOOGLE_GENAI_USE_VERTEXAI": True}, "vertex-express"),
+    ({"GEMINI_API_KEY": "k", "GEMINI_MODEL": "m", "GOOGLE_GENAI_USE_VERTEXAI": False}, "api-key"),
 ])
 def test_ai_mode(config, mode):
     assert gcp.ai_mode(config) == mode
@@ -126,6 +141,20 @@ def test_vertex_client_uses_project_and_location(fake_sdk):
     assert (kwargs["project"], kwargs["location"]) == ("proj", "europe-west4")
 
 
+def test_vertex_express_client_sends_the_key_to_vertex(fake_sdk):
+    config = {**API_KEY_CONFIG, "GOOGLE_GENAI_USE_VERTEXAI": True, "AI_TIMEOUT_SECONDS": 30}
+    kwargs = gcp._gemini_client(config).kwargs
+    assert kwargs["vertexai"] is True and kwargs["api_key"] == FAKE_API_KEY
+    assert "project" not in kwargs and kwargs["http_options"].timeout == 30_000
+
+
+def test_use_vertexai_setting_is_read_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+    app = create_app({"LOAD_DOTENV": False, "DATABASE_PATH": str(tmp_path / "x.db"), "SEED_DEMO_DATA": False,
+                      **API_KEY_CONFIG})
+    assert gcp.ai_mode(app.config) == "vertex-express"
+
+
 def test_disabled_mode_creates_no_client(fake_sdk):
     with pytest.raises(gcp.AIError):
         gcp._gemini_client({"GEMINI_MODEL": "m", "AI_TIMEOUT_SECONDS": 30})
@@ -133,9 +162,12 @@ def test_disabled_mode_creates_no_client(fake_sdk):
 
 
 @pytest.mark.parametrize("overrides, mode", [
-    (API_KEY_CONFIG, "api-key"),
-    ({"GOOGLE_CLOUD_PROJECT": "p", "GEMINI_MODEL": "m"}, "vertex"),
-    ({}, "disabled"),
+    (API_KEY_CONFIG, "api-key (model test-model-from-env)"),
+    ({**API_KEY_CONFIG, "GOOGLE_GENAI_USE_VERTEXAI": True}, "vertex-express (model test-model-from-env)"),
+    ({"GOOGLE_CLOUD_PROJECT": "p", "GEMINI_MODEL": "m"}, "vertex (model m)"),
+    ({"GEMINI_API_KEY": "k"}, "disabled (GEMINI_MODEL is not set)"),
+    ({"GEMINI_MODEL": "m"}, "disabled (set GEMINI_API_KEY or GOOGLE_CLOUD_PROJECT)"),
+    ({**API_KEY_CONFIG, "AI_ENABLED": False}, "disabled (AI_ENABLED=0)"),
 ])
 def test_startup_logs_only_the_mode(make_app, caplog, overrides, mode):
     with caplog.at_level(logging.INFO, logger="cartchef"):
@@ -194,12 +226,100 @@ def test_garbage_model_output_falls_back_for_text(ai_client, fake_sdk, reply):
     assert response.json["recipe"]["ingredients"] == ["2 slices bread", "1 tbsp butter"]
 
 
-@pytest.mark.parametrize("reply", ["no json here", "[]", RuntimeError("503 Service Unavailable"), TimeoutError()])
-def test_garbage_or_failed_model_output_for_photo_is_a_friendly_error(ai_client, fake_sdk, reply):
+def test_image_bytes_are_sent_as_an_image_part_with_the_prompt(ai_client, fake_sdk):
+    fake_sdk.replies.append(json.dumps(GOOD_RECIPE))
+    response = ai_client.post("/api/import", data=upload(JPEG, "Chicken-Biryani-Recipe.jpg", "image/jpeg"))
+    assert response.status_code == 200
+    request = fake_sdk.requests[0]
+    image_part, prompt = request["contents"]
+    assert image_part.inline_data.data == JPEG and image_part.inline_data.mime_type == "image/jpeg"
+    assert isinstance(prompt, str) and "attached photo" in prompt
+    assert request["model"] == "test-model-from-env"
+    assert request["config"].response_mime_type == "application/json"
+    assert request["config"].max_output_tokens == gcp.MAX_OUTPUT_TOKENS
+
+
+def test_upload_stream_is_read_only_once(ai_client, gemini, monkeypatch):
+    reads = []
+
+    def counting_read(self, *args, **kwargs):  # FileStorage normally forwards read() to its stream
+        data = self.stream.read(*args, **kwargs)
+        if has_request_context():  # ignore the test client encoding the upload
+            reads.append(len(data))
+        return data
+
+    monkeypatch.setattr(FileStorage, "read", counting_read, raising=False)
+    gemini.answers.append(GOOD_RECIPE)
+    assert ai_client.post("/api/import", data=upload(JPEG)).status_code == 200
+    assert reads == [len(JPEG)]
+    assert gemini.calls[0]["image"] == JPEG  # the same, non-empty bytes reach Gemini
+
+
+def blocked_prompt():
+    return SimpleNamespace(text=None, prompt_feedback=SimpleNamespace(block_reason=SimpleNamespace(name="SAFETY")),
+                           candidates=[])
+
+
+def safety_stop():
+    return SimpleNamespace(text=None, prompt_feedback=None,
+                           candidates=[SimpleNamespace(finish_reason=SimpleNamespace(name="SAFETY"))])
+
+
+PHOTO_UNREADABLE = "We couldn't read a recipe in that photo"
+
+
+@pytest.mark.parametrize("reply, status, message", [
+    # empty, blocked or unparseable answers
+    ("", 422, PHOTO_UNREADABLE),
+    ("no json here", 422, PHOTO_UNREADABLE),
+    ("[]", 422, PHOTO_UNREADABLE),
+    (blocked_prompt(), 422, PHOTO_UNREADABLE),
+    (safety_stop(), 422, PHOTO_UNREADABLE),
+    (SimpleNamespace(text=None, prompt_feedback=None, candidates=[]), 422, PHOTO_UNREADABLE),
+    # SDK / network errors
+    (api_error(errors.ClientError, 429, "RESOURCE_EXHAUSTED"), 429, "busy or its quota is used up"),
+    (api_error(errors.ClientError, 403, "PERMISSION_DENIED"), 503, "isn't set up correctly"),
+    (api_error(errors.ClientError, 401, "UNAUTHENTICATED"), 503, "isn't set up correctly"),
+    (api_error(errors.ClientError, 404, "NOT_FOUND", "models/gemini-x is not found"), 503, "isn't set up correctly"),
+    (api_error(errors.ClientError, 400, "INVALID_ARGUMENT", "API key not valid."), 503, "isn't set up correctly"),
+    (api_error(errors.ServerError, 504, "DEADLINE_EXCEEDED"), 504, "took too long"),
+    (httpx.ReadTimeout("timed out"), 504, "took too long"),
+    (TimeoutError(), 504, "took too long"),
+    (api_error(errors.ServerError, 500, "INTERNAL"), 502, "Something went wrong"),
+    (api_error(errors.ClientError, 400, "INVALID_ARGUMENT", "response_mime_type is not supported"), 502, "Something went wrong"),
+    (RuntimeError("boom"), 502, "Something went wrong"),
+])
+def test_each_photo_failure_gets_its_own_message(ai_client, fake_sdk, reply, status, message):
     fake_sdk.replies.append(reply)
     response = ai_client.post("/api/import", data=upload(JPEG))
-    assert response.status_code == 502
-    assert "couldn't read that photo" in response.json["error"]
+    assert response.status_code == status
+    assert message in response.json["error"]
+
+
+def test_photo_without_any_ai_config_says_ai_is_not_configured(client):
+    response = client.post("/api/import", data=upload(JPEG))
+    assert response.status_code == 503 and "needs the AI service" in response.json["error"]
+
+
+def test_real_error_is_logged_without_secrets_or_image_bytes(ai_client, fake_sdk, caplog):
+    fake_sdk.replies.append(api_error(
+        errors.ClientError, 403, "PERMISSION_DENIED",
+        f"Requests to generativelanguage.googleapis.com are blocked for key {FAKE_API_KEY}"))
+    with caplog.at_level(logging.WARNING, logger="cartchef.gcp"):
+        ai_client.post("/api/import", data=upload(JPEG))
+    line = next(r.getMessage() for r in caplog.records if "Gemini call failed" in r.getMessage())
+    for expected in ("kind=config", "mode=api-key", "model=test-model-from-env", "error=ClientError",
+                     "code=403", "status=PERMISSION_DENIED", "generativelanguage"):
+        assert expected in line
+    assert "GOOGLE_GENAI_USE_VERTEXAI=true" in caplog.text  # the hint for Vertex Express keys
+    assert FAKE_API_KEY not in caplog.text and FAKE_API_KEY[:12] not in caplog.text
+    assert "\\xff\\xd8" not in caplog.text and repr(JPEG[:8]) not in caplog.text
+
+
+def test_text_import_still_falls_back_when_gemini_fails(ai_client, fake_sdk):
+    fake_sdk.replies.append(api_error(errors.ClientError, 429, "RESOURCE_EXHAUSTED"))
+    response = ai_client.post("/api/import", data={"text": "Toast\n2 slices bread"})
+    assert response.status_code == 200 and response.json["source"] == "fallback"
 
 
 # ---------- sanitizing model output ----------
@@ -411,3 +531,12 @@ def test_api_key_never_appears_in_responses_or_logs(make_app, fake_sdk, caplog):
     for text in [*bodies, caplog.text]:
         assert FAKE_API_KEY not in text  # ...but never the key, nor a recognisable part of it
         assert FAKE_API_KEY[:12] not in text and FAKE_API_KEY[-12:] not in text
+
+
+# ---------- missing prep time ----------
+
+def test_missing_prep_time_comes_back_as_null_not_a_guess(ai_client, gemini, client):
+    gemini.answers.append({k: v for k, v in GOOD_RECIPE.items() if k != "prep_time_minutes"})
+    assert ai_client.post("/api/import", data={"text": "Pesto pasta"}).json["recipe"]["prep_time"] is None
+    fallback = client.post("/api/import", data={"text": "Toast\n2 slices bread\n1 tbsp butter"})
+    assert fallback.json["source"] == "fallback" and fallback.json["recipe"]["prep_time"] is None

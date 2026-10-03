@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { addRecipeToList, deleteRecipe, estimateNutrition, getRecipe, getScaled, suggestSubstitutes } from "../api/endpoints";
+import { ChatPanel } from "../components/ChatPanel";
 import { ConfirmButton } from "../components/ConfirmButton";
 import { DietTags } from "../components/DietTags";
 import { Icon } from "../components/Icon";
+import { RecipeCover } from "../components/RecipeCover";
 import { ServingsSelect } from "../components/ServingsSelect";
 import { ErrorState, LoadingState } from "../components/States";
 import { useApi } from "../hooks/useApi";
@@ -20,7 +22,7 @@ export function RecipeDetail() {
   const recipe = useApi(`recipe:${id}`, async () => (await getRecipe(id)).recipe);
   usePageTitle(recipe.data?.title ?? "Recipe");
 
-  if (recipe.status === "loading") return <LoadingState label="Loading recipe…" />;
+  if (recipe.status === "loading") return <LoadingState label="Loading recipe…" kind="block" />;
   if (!recipe.data) {
     return (
       <div className="error-page">
@@ -29,10 +31,12 @@ export function RecipeDetail() {
       </div>
     );
   }
-  return <RecipeView key={recipe.data.id} recipe={recipe.data} />;
+  // Re-key on content so the view resets after the chef replaces this recipe.
+  const data = recipe.data;
+  return <RecipeView key={`${data.id}:${data.title}:${data.ingredients}`} recipe={data} onReplaced={() => void recipe.reload()} />;
 }
 
-function RecipeView({ recipe }: { recipe: Recipe }) {
+function RecipeView({ recipe, onReplaced }: { recipe: Recipe; onReplaced: () => void }) {
   const { ai_enabled: aiEnabled } = useConfig();
   const toast = useToast();
   const shopping = useShoppingList();
@@ -44,6 +48,7 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
   const [dietTags, setDietTags] = useState(recipe.diet_tags);
   const [nutritionNote, setNutritionNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<"add" | "nutrition" | null>(null);
+  const [chatOpen, setChatOpen] = useState(false);
   const latestScale = useRef(0);
 
   async function changeServings(next: number) {
@@ -113,15 +118,19 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
   return (
     <article className={`recipe-page cat-${category}`}>
       <header className="recipe-hero">
-        <Link className="link-quiet" to="/">← All recipes</Link>
-        <div className="card-top">
-          <span className={`tag tag-${category}`}>{recipe.category}</span>
-          <span className="meta">
-            <Icon name="clock" /> {recipe.prep_time} min prep
-          </span>
+        <RecipeCover recipe={recipe} size="hero" />
+        <div className="recipe-hero-text">
+          <Link className="link-arrow link-back" to="/">← All recipes</Link>
+          <p className="eyebrow">
+            {recipe.category} · <span className="num">{recipe.prep_time}</span> min prep · <span className="num">{recipe.lines.length}</span> ingredients
+          </p>
+          <h1 className="display">{recipe.title}</h1>
+          <DietTags tags={dietTags} />
+          <button type="button" className="btn btn-ghost hero-ask" onClick={() => setChatOpen(true)}>
+            <Icon name="chat" />
+            <span>Ask the chef</span>
+          </button>
         </div>
-        <h1>{recipe.title}</h1>
-        <DietTags tags={dietTags} />
       </header>
 
       <div className="recipe-layout">
@@ -132,7 +141,7 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
             </h2>
             <ServingsSelect value={multiplier} onChange={(m) => void changeServings(m)} recipeTitle={recipe.title} />
           </div>
-          <ul className="lines lines-detail" aria-label={`Ingredients for ${recipe.title}`}>
+          <ul className="lines" aria-label={`Ingredients for ${recipe.title}`}>
             {lines.map((line, index) => {
               const swap = swaps[index];
               return (
@@ -199,6 +208,18 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
           {!aiEnabled && !nutritionNote && <p className="hint">Gemini is off, so this shows keyword-based diet tags only.</p>}
         </aside>
       </div>
+
+      {chatOpen && (
+        <ChatPanel
+          recipe={recipe}
+          onClose={() => setChatOpen(false)}
+          onRecipeSaved={(saved, replaced) => {
+            setChatOpen(false);
+            if (replaced) onReplaced();
+            else navigate(`/recipes/${saved.id}`);
+          }}
+        />
+      )}
 
       <div className="danger-zone">
         <ConfirmButton className="btn btn-danger" confirmLabel="Tap again to delete" onConfirm={() => void remove()}>

@@ -1,5 +1,5 @@
 import type {
-  AddResult, AppConfig, BuildResult, Category, Counts, ImportResult, InsightsData, ListData,
+  AddResult, AppConfig, BuildResult, Category, ChatResult, ChatTurn, Counts, ImportResult, InsightsData, ListData,
   NutritionResult, PlanData, Recipe, ScaledLines, SubstituteResult,
 } from "../types";
 import { api } from "./client";
@@ -19,6 +19,11 @@ export interface RecipeInput {
 }
 
 export const createRecipe = (input: RecipeInput) => api.post<{ recipe: Recipe }>("/api/recipes", input);
+
+export const updateRecipe = (id: number, input: RecipeInput) => api.put<{ recipe: Recipe }>(`/api/recipes/${id}`, input);
+
+export const sendChat = (message: string, recipeId: number | null, history: ChatTurn[]) =>
+  api.post<ChatResult>("/api/chat", { message, recipe_id: recipeId, history });
 
 export const deleteRecipe = (id: number) => api.delete<{ deleted: number }>(`/api/recipes/${id}`);
 

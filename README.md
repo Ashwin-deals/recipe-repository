@@ -232,6 +232,11 @@ line; ingredients = lines after an "Ingredients" heading until "Method/Direction
 that start with a quantity) and comes back with `"source": "fallback"`. A photo alone gets a friendly message
 suggesting you paste the text instead.
 
+**When Gemini fails on a photo** the user gets a specific message: AI not set up correctly (key, permission or model
+problem, HTTP 503), busy/quota reached (429), timed out (504), photo unreadable or blocked (422), and a generic
+"something went wrong" (502) only as a last resort. The server log records the error class, HTTP code and status,
+the SDK's message and the model name, never the key or image bytes. Pasted text falls back to the basic parser instead.
+
 **Guardrails:** 10 requests per minute per client (`AI_RATE_LIMIT`), a daily cap on AI calls stored in the database
 (`AI_DAILY_CAP`, default 300; the import returns HTTP 429 once it's reached), a 30-second request timeout, and an
 `ai_import` event per import (no image data, no secrets).
@@ -241,12 +246,14 @@ suggesting you paste the text instead.
 | Variable | Purpose |
 |---|---|
 | `GEMINI_MODEL` | Model name to call (required for AI; `.env.example` suggests one) |
-| `GEMINI_API_KEY` | Gemini API key from Google AI Studio. If set, the client uses it ("api-key" mode) |
+| `GEMINI_API_KEY` | An API key. By default it's treated as a Gemini API key from Google AI Studio ("api-key" mode) |
+| `GOOGLE_GENAI_USE_VERTEXAI` | Set to `true` if `GEMINI_API_KEY` is a **Vertex AI Express mode** key ("vertex-express" mode). These keys are rejected by the Gemini Developer API with `403 PERMISSION_DENIED` |
 | `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION` | Used when there's no API key: Vertex AI with Application Default Credentials ("vertex" mode; location defaults to `global`) |
 | `AI_ENABLED` | `1` (default) or `0` to force the fallbacks |
 | `AI_DAILY_CAP`, `AI_RATE_LIMIT`, `AI_TIMEOUT_SECONDS` | Guardrails (300, 10/minute, 30) |
 
-At startup the log says only which mode is active, e.g. `Gemini mode: api-key`, `vertex` or `disabled`. The API key
+At startup the log says only which mode is active and the model, e.g. `Gemini mode: api-key (model …)`,
+`vertex-express`, `vertex`, or `disabled (GEMINI_MODEL is not set)`. The API key
 is never logged, returned in a response, or included in an error message.
 
 **Run it locally with Gemini**
@@ -262,6 +269,25 @@ cd frontend && npm run dev                    # second terminal; open http://loc
 For Vertex AI instead, leave `GEMINI_API_KEY` empty, set `GOOGLE_CLOUD_PROJECT` (and optionally
 `GOOGLE_CLOUD_LOCATION`), and run `gcloud auth application-default login` once. With neither set, everything still
 works using the fallbacks. Tests never call Gemini: `pytest tests/test_import.py` uses a fake client.
+
+## Ask the chef
+
+A chat assistant opened from the dashboard header (general questions), from any recipe card or drawer,
+and from the recipe page (questions about that recipe). It can suggest substitutions, adapt a recipe
+(vegan, gluten-free, less spicy, different servings, fewer ingredients), suggest dishes from ingredients
+you list, and answer cooking questions.
+
+- `POST /api/chat` with `{message, recipe_id?, history}`. The server is stateless: it keeps at most the
+  last 8 user/assistant turns (each trimmed, other roles ignored) and loads the recipe itself by id.
+- Gemini answers in JSON: a short reply, an optional recipe **proposal**, and optional **shopping items**.
+  The proposal is sanitized like a recipe import. The UI shows it as a before/after comparison with
+  **Apply as new recipe**, **Replace this recipe** (`PUT /api/recipes/<id>`) and **Dismiss**; shopping
+  items get **Add to list** buttons. Nothing is saved until you click.
+- Guardrails: 500-character messages, `CHAT_RATE_LIMIT` (default 15/minute), the shared daily AI cap, the
+  30-second timeout, and the same specific error messages as photo import. An `ai_chat` event is logged
+  without the message text; message contents and the API key are never logged.
+- Without AI it answers with a friendly note, plus built-in swaps when the message names a known
+  ingredient (e.g. "out of butter").
 
 ## Deployment
 

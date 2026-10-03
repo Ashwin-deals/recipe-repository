@@ -1,6 +1,7 @@
 import { NavLink } from "react-router-dom";
 import { useShoppingList } from "../hooks/useShoppingList";
 import { Icon, type IconName } from "./Icon";
+import { ThemeToggle } from "./ThemeToggle";
 
 const LINKS: Array<{ to: string; label: string; icon: IconName }> = [
   { to: "/", label: "Recipes", icon: "book" },
@@ -23,17 +24,19 @@ export function Nav() {
       </NavLink>
       <nav className="nav" aria-label="Main">
         {LINKS.map((link) => (
-          <NavLink key={link.to} className="nav-link" to={link.to} end={link.to === "/"}>
+          <NavLink key={link.to} className="nav-link" to={link.to} end={link.to === "/"}
+            data-cart-target={link.to === "/shopping" ? "secondary" : undefined}>
             <Icon name={link.icon} />
             <span className="nav-label">{link.label}</span>
             {link.to === "/shopping" && counts.open > 0 && (
-              <span className="nav-badge" aria-label={`${counts.open} items to buy`}>
+              <span className="nav-badge" key={counts.open} aria-label={`${counts.open} items to buy`}>
                 {counts.open}
               </span>
             )}
           </NavLink>
         ))}
       </nav>
+      <ThemeToggle />
     </header>
   );
 }

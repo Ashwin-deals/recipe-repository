@@ -22,6 +22,8 @@ export interface Recipe {
   nutrition: Nutrition | null;
   diet_tags: string[];
   created_at: string;
+  /** Optional cover photo. The API doesn't store recipe photos yet, so this is usually absent. */
+  photo_url?: string | null;
 }
 
 export interface AppConfig {
@@ -124,6 +126,26 @@ export interface ImportResult {
   recipe: RecipeDraft;
   source: "gemini" | "fallback";
   message: string;
+}
+
+/** A recipe the chef proposes. prep_time can be missing in general (no-recipe) mode. */
+export interface ChatProposal {
+  title: string;
+  prep_time: number | null;
+  category: Category;
+  ingredients: string[];
+}
+
+export interface ChatTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface ChatResult {
+  reply: string;
+  proposal: ChatProposal | null;
+  shopping_items: string[];
+  source: "gemini" | "fallback";
 }
 
 export interface NutritionResult {

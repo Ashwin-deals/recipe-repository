@@ -16,7 +16,7 @@ export default defineConfig({
       // "prompt": a new build waits until the user accepts the "new version" banner.
       registerType: "prompt",
       injectRegister: false,
-      includeAssets: ["icons/icon-192.png"],
+      includeAssets: ["icons/icon-192.png", "theme-init.js"],
       manifest: {
         name: "CartChef: Recipe Box & Shopping List",
         short_name: "CartChef",
@@ -24,8 +24,8 @@ export default defineConfig({
         start_url: "/",
         scope: "/",
         display: "standalone",
-        background_color: "#fbf5ea",
-        theme_color: "#c8442a",
+        background_color: "#eef1ea",
+        theme_color: "#0f2a23",
         icons: [
           { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png" },
@@ -37,7 +37,8 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,png,svg,webmanifest}"],
+        // Only the Latin font files are precached; other subsets load on demand.
+        globPatterns: ["**/*.{js,css,html,png,svg,webmanifest}", "**/*-latin-wght-normal-*.woff2", "**/*-latin-[0-9]*-normal-*.woff2"],
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api\//, /^\/healthz/],
         cleanupOutdatedCaches: true,

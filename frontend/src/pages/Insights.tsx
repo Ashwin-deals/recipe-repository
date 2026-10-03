@@ -1,6 +1,7 @@
 import { getInsights } from "../api/endpoints";
 import { Icon } from "../components/Icon";
 import { InsightBars } from "../components/InsightBars";
+import { PageHeader } from "../components/PageHeader";
 import { ErrorState, LoadingState } from "../components/States";
 import { useApi } from "../hooks/useApi";
 import { usePageTitle } from "../hooks/usePageTitle";
@@ -12,20 +13,16 @@ export function Insights() {
 
   return (
     <div className="insights-page">
-      <div className="pane-head">
-        <div>
-          <p className="eyebrow">Insights</p>
-          <h1>How your kitchen runs</h1>
-        </div>
+      <PageHeader eyebrow="No. 04 · Insights" title="How your kitchen runs">
         {data?.looker_url && (
           <a className="btn btn-ghost" href={data.looker_url} target="_blank" rel="noopener noreferrer">
             <Icon name="chart" />
             <span>Open Looker Studio</span>
           </a>
         )}
-      </div>
+      </PageHeader>
 
-      {insights.status === "loading" && <LoadingState label="Crunching the numbers…" />}
+      {insights.status === "loading" && <LoadingState label="Crunching the numbers…" kind="cards" />}
       {insights.status === "error" && (
         <ErrorState message={insights.error ?? "Couldn't load insights."} onRetry={() => void insights.reload()} />
       )}
@@ -51,7 +48,8 @@ export function Insights() {
             <section className="panel panel-wide" aria-labelledby="trends">
               <h2 id="trends">Category trends</h2>
               <div className="legend">
-                <span className="key key-saved" /> Recipes saved <span className="key key-added" /> Times added to a list
+                <span><span className="key key-saved" /> Recipes saved</span>
+                <span><span className="key key-added" /> Times added to a list</span>
               </div>
               <ol className="bars bars-paired">
                 {data.categories.map((c) => (
@@ -65,7 +63,7 @@ export function Insights() {
                         <span className="bar-fill bar-saved" style={{ width: `${c.saved_percent}%` }} />
                       </span>
                       <span className="bar-track">
-                        <span className={`bar-fill bar-added tag-${c.label.toLowerCase()}`} style={{ width: `${c.added_percent}%` }} />
+                        <span className={`bar-fill bar-added bar-${c.label.toLowerCase()}`} style={{ width: `${c.added_percent}%` }} />
                       </span>
                     </span>
                     <span className="bar-value" aria-label={`${c.saved} saved, ${c.added} added`}>
