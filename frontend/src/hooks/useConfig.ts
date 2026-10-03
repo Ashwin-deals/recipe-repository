@@ -4,7 +4,7 @@ import type { AppConfig } from "../types";
 // Used until /api/config answers (and offline), so the UI never waits on it.
 export const DEFAULT_CONFIG: AppConfig = {
   ai_enabled: false,
-  categories: ["Breakfast", "Dinner", "Dessert"],
+  categories: ["Breakfast", "Lunch", "Dinner", "Dessert"],
   days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
   multipliers: [1, 2, 3, 4],
   max_image_bytes: 5 * 1024 * 1024,

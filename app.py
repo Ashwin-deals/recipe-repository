@@ -305,7 +305,7 @@ def api_config():
 def api_recipes():
     category = request.args.get("category") or None
     if category is not None and category not in ingredients.CATEGORIES:
-        abort(400, "Category must be Breakfast, Dinner or Dessert.")
+        abort(400, "Category must be Breakfast, Lunch, Dinner or Dessert.")
     return jsonify(recipes=database.list_recipes(get_db(), category), category=category)
 
 

@@ -540,7 +540,7 @@ def aisle_order(aisle: str) -> int:
 # Non-AI fallbacks: category guess, recipe text parser, diet tags, substitutions
 # --------------------------------------------------------------------------
 
-CATEGORIES = ("Breakfast", "Dinner", "Dessert")
+CATEGORIES = ("Breakfast", "Lunch", "Dinner", "Dessert")
 DIET_TAGS = ("vegetarian", "vegan", "gluten-free", "dairy-free", "contains nuts")
 
 _CATEGORY_WORDS = {
@@ -548,6 +548,7 @@ _CATEGORY_WORDS = {
                   "toast", "muffin", "smoothie", "cereal", "scrambled", "frittata", "brunch"),
     "Dessert": ("dessert", "cake", "cookie", "brownie", "pie", "pudding", "ice cream", "crumble",
                 "tart", "custard", "mousse", "cheesecake", "kheer", "halwa", "fudge", "sweet"),
+    "Lunch": ("lunch", "sandwich", "wrap", "salad", "burger", "panini", "quesadilla", "tiffin"),
 }
 
 

@@ -205,7 +205,7 @@ def test_garbage_or_failed_model_output_for_photo_is_a_friendly_error(ai_client,
 # ---------- sanitizing model output ----------
 
 @pytest.mark.parametrize("category, expected", [
-    ("Dessert", "Dessert"), ("dessert", "Dessert"), (" BREAKFAST ", "Breakfast"),
+    ("Dessert", "Dessert"), ("dessert", "Dessert"), (" BREAKFAST ", "Breakfast"), ("lunch", "Lunch"),
     ("Lunch; DROP TABLE recipes", "Dinner"), (None, "Dinner"), (["Dessert"], "Dinner"), (7, "Dinner"),
 ])
 def test_category_is_forced_into_the_allowed_set(ai_client, gemini, category, expected):

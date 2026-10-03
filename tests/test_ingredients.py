@@ -288,6 +288,7 @@ def test_aisle_order_follows_store_layout():
 @pytest.mark.parametrize("text, category", [
     ("Banana Pancakes", "Breakfast"), ("Masala omelette", "Breakfast"),
     ("Chocolate chip cookies", "Dessert"), ("Apple crumble", "Dessert"), ("Chicken curry", "Dinner"),
+    ("Grilled chicken sandwich", "Lunch"), ("Greek salad", "Lunch"), ("Fruit salad pudding", "Dessert"),
 ])
 def test_guess_category(text, category):
     assert ing.guess_category(text) == category

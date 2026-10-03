@@ -24,7 +24,7 @@ Build a personal recipe repository where users can save their favorite meals, vi
 - [x] Dashboard with a side-by-side (or two-page) layout: browse recipes and check off shopping items
 - [x] **Servings scaler:** dropdown (e.g. 2x, 4x) that multiplies ingredient quantities
 - [x] **Checkable list:** clicking an item strikes it through
-- [x] **Category tags:** filter recipes by Breakfast, Dinner or Dessert
+- [x] **Category tags:** filter recipes by Breakfast, Lunch, Dinner or Dessert
 - [x] **Clear list button:** wipes the shopping list after a grocery trip
 
 ---
@@ -219,7 +219,7 @@ Gemini, which extracts the title, prep time, category and ingredients **in Engli
 2. `POST /api/import` (multipart: `image` and/or `text`) checks the upload's real file signature (JPEG, PNG or WebP
    only, max 5 MB) and the text (max 8,000 characters). The image is processed in memory and never stored.
 3. Gemini is told to extract only recipe fields and to ignore any instructions inside the photo or text. Its JSON
-   reply is treated as untrusted: code fences are stripped, the category is forced to Breakfast, Dinner or Dessert,
+   reply is treated as untrusted: code fences are stripped, the category is forced to Breakfast, Lunch, Dinner or Dessert,
    prep time is clamped to 0–1440 minutes, ingredients are trimmed, de-duplicated, capped at 60 lines of 200
    characters, and control characters are removed. An empty result returns a friendly "couldn't find a recipe" error.
 4. If you've already typed in a field the import would change, the form asks first: **Replace with import** or

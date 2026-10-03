@@ -38,7 +38,7 @@ export function mockApi(routes: Record<string, Handler | object>) {
       routes[`${method} ${url.pathname}${url.search}`] ??
       routes[`${method} ${url.pathname}`] ??
       (url.pathname === "/api/csrf" ? { token: "test-token" } : undefined) ??
-      (url.pathname === "/api/config" ? { ai_enabled: false, categories: ["Breakfast", "Dinner", "Dessert"],
+      (url.pathname === "/api/config" ? { ai_enabled: false, categories: ["Breakfast", "Lunch", "Dinner", "Dessert"],
         days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
         multipliers: [1, 2, 3, 4], max_image_bytes: 5242880 } : undefined);
     if (handler === undefined) return json({ error: `No mock for ${method} ${url.pathname}` }, 404);

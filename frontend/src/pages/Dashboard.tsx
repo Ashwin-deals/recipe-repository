@@ -11,7 +11,7 @@ import { useRecipes } from "../hooks/useRecipes";
 import { useToast } from "../hooks/useToast";
 import type { Category } from "../types";
 
-const CATEGORIES: readonly string[] = ["Breakfast", "Dinner", "Dessert"];
+const CATEGORIES: readonly string[] = ["Breakfast", "Lunch", "Dinner", "Dessert"];
 
 function toCategory(value: string | null): Category | null {
   return value && CATEGORIES.includes(value) ? (value as Category) : null;

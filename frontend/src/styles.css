@@ -18,6 +18,8 @@
   --mustard-wash: #fbefd2;
   --berry: #a83f67;
   --berry-wash: #f7dfe8;
+  --teal: #2f7a80;
+  --teal-wash: #dcefee;
   --notepad: #fffbe9;
   --notepad-rule: #cfe0ec;
   --margin-line: #e8a49a;
@@ -166,6 +168,7 @@ img, svg { display: block; }
 }
 .chip.is-active { background: var(--ink); border-color: var(--ink); color: var(--paper); }
 .chip-breakfast.is-active { background: var(--mustard); border-color: var(--mustard); color: var(--ink); }
+.chip-lunch.is-active { background: var(--teal); border-color: var(--teal); }
 .chip-dinner.is-active { background: var(--basil); border-color: var(--basil); }
 .chip-dessert.is-active { background: var(--berry); border-color: var(--berry); }
 
@@ -187,6 +190,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--t
 }
 .recipe-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 6px; background: var(--accent); }
 .cat-breakfast { --accent: var(--mustard); --accent-wash: var(--mustard-wash); }
+.cat-lunch { --accent: var(--teal); --accent-wash: var(--teal-wash); }
 .cat-dinner { --accent: var(--basil); --accent-wash: var(--basil-wash); }
 .cat-dessert { --accent: var(--berry); --accent-wash: var(--berry-wash); }
 .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -195,6 +199,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--t
   letter-spacing: .06em; text-transform: uppercase;
 }
 .tag-breakfast { background: var(--mustard-wash); color: #7a540b; }
+.tag-lunch { background: var(--teal-wash); color: #1d4f53; }
 .tag-dinner { background: var(--basil-wash); color: #34521f; }
 .tag-dessert { background: var(--berry-wash); color: #7d2a4b; }
 .meta { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-soft); font-size: .88rem; }
@@ -384,13 +389,14 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--t
 .bar-pair { display: grid; gap: 4px; }
 .bar-saved { background: var(--ink-faint); }
 .bar-added.tag-breakfast { background: var(--mustard); }
+.bar-added.tag-lunch { background: var(--teal); }
 .bar-added.tag-dinner { background: var(--basil); }
 .bar-added.tag-dessert { background: var(--berry); }
 .bar-value { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink-soft); }
 .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 12px; font-size: .88rem; color: var(--ink-soft); }
 .key { display: inline-block; width: 14px; height: 14px; border-radius: 4px; }
 .key-saved { background: var(--ink-faint); }
-.key-added { background: linear-gradient(90deg, var(--mustard) 33%, var(--basil) 33% 66%, var(--berry) 66%); }
+.key-added { background: linear-gradient(90deg, var(--mustard) 25%, var(--teal) 25% 50%, var(--basil) 50% 75%, var(--berry) 75%); }
 
 /* ---------- Messages ---------- */
 .flashes { margin-bottom: 16px; }

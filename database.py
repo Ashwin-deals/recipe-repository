@@ -15,18 +15,20 @@ MULTIPLIERS = (1, 2, 3, 4)
 TITLE_MAX = 120
 PREP_TIME_MAX = 1440
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS recipes (
+RECIPES_TABLE = """
+CREATE TABLE IF NOT EXISTS {name} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     title       TEXT    NOT NULL,
     prep_time   INTEGER NOT NULL CHECK (prep_time BETWEEN 0 AND 1440),
-    category    TEXT    NOT NULL CHECK (category IN ('Breakfast', 'Dinner', 'Dessert')),
+    category    TEXT    NOT NULL CHECK (category IN ('Breakfast', 'Lunch', 'Dinner', 'Dessert')),
     ingredients TEXT    NOT NULL,
     nutrition   TEXT,
     diet_tags   TEXT    NOT NULL DEFAULT '[]',
     created_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+"""
 
+SCHEMA = RECIPES_TABLE.format(name="recipes") + """
 CREATE TABLE IF NOT EXISTS shopping_list (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     item_key   TEXT    NOT NULL,
@@ -99,6 +101,7 @@ def init_db(path: str, *, seed: bool = True) -> None:
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        _allow_every_category(conn)
         if seed and get_meta(conn, "seeded") is None:
             for recipe in SEED_RECIPES:
                 create_recipe(conn, recipe)
@@ -106,6 +109,37 @@ def init_db(path: str, *, seed: bool = True) -> None:
         conn.commit()
     finally:
         conn.close()
+
+
+def _allow_every_category(conn: sqlite3.Connection) -> None:
+    """Rebuild a recipes table whose CHECK predates a category (e.g. Lunch); SQLite can't alter a CHECK.
+
+    Follows SQLite's create-copy-drop-rename recipe with foreign keys off, so meal_plan rows
+    are not cascade-deleted and their recipe_id references stay valid.
+    """
+    sql = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'recipes'").fetchone()[0]
+    if all(f"'{category}'" in sql for category in CATEGORIES):
+        return
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'recipes'").fetchone()
+        conn.execute("BEGIN")
+        conn.execute(RECIPES_TABLE.format(name="recipes_new"))
+        conn.execute("INSERT INTO recipes_new SELECT id, title, prep_time, category, ingredients, nutrition, "
+                     "diet_tags, created_at FROM recipes")
+        conn.execute("DROP TABLE recipes")
+        conn.execute("ALTER TABLE recipes_new RENAME TO recipes")
+        if row:  # keep ids of deleted recipes from being reused
+            conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'recipes'", (row[0],))
+        if conn.execute("PRAGMA foreign_key_check").fetchall():
+            raise sqlite3.IntegrityError("recipes migration broke a foreign key")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
 
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
@@ -172,7 +206,7 @@ def validate_recipe(title, prep_time, category, ingredient_text) -> tuple[dict, 
         errors["prep_time"] = f"Prep time must be a whole number of minutes from 0 to {PREP_TIME_MAX}."
 
     if category not in CATEGORIES:
-        errors["category"] = "Pick Breakfast, Dinner or Dessert."
+        errors["category"] = "Pick Breakfast, Lunch, Dinner or Dessert."
 
     raw_lines = [line for line in str(ingredient_text or "").splitlines() if line.strip()]
     lines = ingredients.split_lines(str(ingredient_text or ""))

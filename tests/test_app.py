@@ -31,7 +31,7 @@ def test_security_headers(client):
 def test_config(client):
     data = client.get("/api/config").json
     assert data["ai_enabled"] is False
-    assert data["categories"] == ["Breakfast", "Dinner", "Dessert"]
+    assert data["categories"] == ["Breakfast", "Lunch", "Dinner", "Dessert"]
     assert data["multipliers"] == [1, 2, 3, 4]
     assert data["days"][0] == "Monday" and len(data["days"]) == 7
 
@@ -120,7 +120,7 @@ def test_create_recipe_validation(client, db):
         "title": [recipe_body(title=""), recipe_body(title="x" * 121), recipe_body(title=None)],
         "prep_time": [recipe_body(prep_time=""), recipe_body(prep_time=-5), recipe_body(prep_time="abc"),
                       recipe_body(prep_time=1441), recipe_body(prep_time="2.5")],
-        "category": [recipe_body(category="Lunch"), recipe_body(category="")],
+        "category": [recipe_body(category="Brunch"), recipe_body(category="lunch"), recipe_body(category="")],
         "ingredients": [recipe_body(ingredients=""), recipe_body(ingredients="  \n "),
                         recipe_body(ingredients="\n".join(["1 egg"] * 61)), recipe_body(ingredients="x" * 201)],
     }
@@ -149,16 +149,18 @@ def test_get_and_delete_recipe_cascades_to_planner(client, db, add_recipe):
 
 def test_category_filter(client, add_recipe):
     add_recipe(title="Morning Oats", category="Breakfast")
+    add_recipe(title="Club Sandwich", category="Lunch")
     add_recipe(title="Night Curry", category="Dinner")
     add_recipe(title="Sweet Pie", category="Dessert")
 
     def titles(query=""):
         return [r["title"] for r in client.get(f"/api/recipes{query}").json["recipes"]]
 
+    assert titles("?category=Lunch") == ["Club Sandwich"]
     assert titles("?category=Dinner") == ["Night Curry"]
     assert titles("?category=Dessert") == ["Sweet Pie"]
-    assert sorted(titles()) == ["Morning Oats", "Night Curry", "Sweet Pie"]
-    assert client.get("/api/recipes?category=Lunch").status_code == 400
+    assert sorted(titles()) == ["Club Sandwich", "Morning Oats", "Night Curry", "Sweet Pie"]
+    assert client.get("/api/recipes?category=Brunch").status_code == 400
 
 
 # ---------- scaling ----------
@@ -353,3 +355,29 @@ def test_csrf_is_enforced_on_writes(make_app):
 def test_csrf_token_is_stable_for_a_session(make_app):
     client = make_app(CSRF_ENABLED=True).test_client()
     assert client.get("/api/csrf").json["token"] == client.get("/api/csrf").json["token"]
+
+
+def test_database_from_before_lunch_is_migrated_without_losing_data(tmp_path):
+    path = str(tmp_path / "old.db")
+    old_schema = database.SCHEMA.replace("'Breakfast', 'Lunch', 'Dinner', 'Dessert'", "'Breakfast', 'Dinner', 'Dessert'")
+    conn = database.connect(path)
+    conn.executescript(old_schema)
+    for title in ("Oats", "Gone", "Curry"):
+        conn.execute("INSERT INTO recipes (title, prep_time, category, ingredients) VALUES (?, 10, 'Dinner', '[]')",
+                     (title,))
+    conn.execute("DELETE FROM recipes WHERE title = 'Gone'")
+    conn.execute("INSERT INTO meal_plan (day, recipe_id) VALUES ('Monday', 3)")
+    conn.commit()
+    conn.close()
+
+    database.init_db(path, seed=False)
+    database.init_db(path, seed=False)  # a second start is a no-op
+
+    conn = database.connect(path)
+    assert [r["title"] for r in database.list_recipes(conn)] == ["Curry", "Oats"]
+    assert [tuple(r) for r in conn.execute("SELECT recipe_id FROM meal_plan")] == [(3,)]
+    new_id = database.create_recipe(conn, {"title": "Wrap", "prep_time": 5, "category": "Lunch", "ingredients": ["1 wrap"]})
+    assert new_id == 4  # the deleted recipe's id is not reused
+    assert database.delete_recipe(conn, 3)
+    assert conn.execute("SELECT COUNT(*) FROM meal_plan").fetchone()[0] == 0  # cascade still works
+    conn.close()

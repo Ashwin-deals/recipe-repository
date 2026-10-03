@@ -1,6 +1,6 @@
 // Shapes of the Flask JSON API. Field names match the backend exactly.
 
-export type Category = "Breakfast" | "Dinner" | "Dessert";
+export type Category = "Breakfast" | "Lunch" | "Dinner" | "Dessert";
 export type Source = "ai" | "basic";
 
 export interface Nutrition {
