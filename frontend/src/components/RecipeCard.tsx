@@ -8,14 +8,13 @@ interface RecipeCardProps {
   recipe: Recipe;
   index: number;
   onOpen: (recipe: Recipe) => void;
-  onAsk: (recipe: Recipe) => void;
 }
 
 /**
- * Compact, fixed-shape card: cover, a two-line title, one line of meta, one row of tags and the
- * chef button. Every card has the same height; details open in the drawer, never inside the card.
+ * Compact, fixed-shape card: cover, a two-line title, one line of meta and one row of tags.
+ * Every card has the same height; details open in the drawer, never inside the card.
  */
-export function RecipeCard({ recipe, index, onOpen, onAsk }: RecipeCardProps) {
+export function RecipeCard({ recipe, index, onOpen }: RecipeCardProps) {
   return (
     <article
       className={`recipe-card cat-${recipe.category.toLowerCase()}`}
@@ -42,9 +41,6 @@ export function RecipeCard({ recipe, index, onOpen, onAsk }: RecipeCardProps) {
         <div className="card-tags">
           <DietTags tags={recipe.diet_tags} max={2} />
         </div>
-        <button type="button" className="card-ask" onClick={() => onAsk(recipe)} aria-label={`Ask the chef about ${recipe.title}`}>
-          <Icon name="chat" /> Ask the chef
-        </button>
       </div>
     </article>
   );

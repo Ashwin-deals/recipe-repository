@@ -71,6 +71,13 @@ const PATHS = {
   ),
   moon: <path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
+  minus: <path d="M6 12h12" />,
+  search: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m15.5 15.5 5 5" />
+    </>
+  ),
   chat: (
     <>
       <path d="M4 5h16v11H9l-5 4z" />

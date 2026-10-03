@@ -19,12 +19,18 @@ describe("RecipeCard", () => {
   it("is compact and opens the recipe from its title", async () => {
     mockApi({ "GET /api/list": makeList() });
     const onOpen = vi.fn();
-    renderWithProviders(<RecipeCard recipe={makeRecipe()} index={0} onOpen={onOpen} onAsk={vi.fn()} />);
+    renderWithProviders(<RecipeCard recipe={makeRecipe()} index={0} onOpen={onOpen} />);
     expect(screen.getByRole("heading", { name: "Pancakes" })).toBeInTheDocument();
     expect(screen.getByText("ingredients", { exact: false })).toHaveTextContent("3 ingredients");
     expect(screen.queryByRole("list", { name: /Ingredients for/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Pancakes" }));
     expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+  });
+
+  it("has no Ask the chef button (the floating launcher replaces it)", () => {
+    mockApi({ "GET /api/list": makeList() });
+    renderWithProviders(<RecipeCard recipe={makeRecipe()} index={0} onOpen={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: /ask the chef/i })).not.toBeInTheDocument();
   });
 });
 
@@ -32,7 +38,7 @@ describe("RecipeCard layout", () => {
   it("shows at most two diet tags and collapses the rest into +N", () => {
     mockApi({ "GET /api/list": makeList() });
     renderWithProviders(
-      <RecipeCard recipe={makeRecipe({ diet_tags: ["vegetarian", "vegan", "gluten-free", "contains nuts"] })} index={0} onOpen={vi.fn()} onAsk={vi.fn()} />,
+      <RecipeCard recipe={makeRecipe({ diet_tags: ["vegetarian", "vegan", "gluten-free", "contains nuts"] })} index={0} onOpen={vi.fn()} />,
     );
     const tags = screen.getByRole("list", { name: "Diet tags (estimate)" });
     expect(within(tags).getAllByRole("listitem")).toHaveLength(3);
@@ -42,7 +48,7 @@ describe("RecipeCard layout", () => {
 
   it("reserves the tag row even without tags", () => {
     mockApi({ "GET /api/list": makeList() });
-    const { container } = renderWithProviders(<RecipeCard recipe={makeRecipe({ diet_tags: [] })} index={0} onOpen={vi.fn()} onAsk={vi.fn()} />);
+    const { container } = renderWithProviders(<RecipeCard recipe={makeRecipe({ diet_tags: [] })} index={0} onOpen={vi.fn()} />);
     expect(container.querySelector(".card-tags")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Diet tags (estimate)" })).not.toBeInTheDocument();
   });
@@ -118,5 +124,12 @@ describe("RecipeDrawer", () => {
     mockApi({ "GET /api/list": makeList() });
     renderDrawer();
     expect(screen.getByRole("link", { name: /Full recipe/ })).toHaveAttribute("href", "/recipes/1");
+  });
+
+  it("offers a small 'Ask about this recipe' link", async () => {
+    mockApi({ "GET /api/list": makeList() });
+    const { onAsk } = renderDrawer();
+    await userEvent.click(screen.getByRole("button", { name: "Ask about this recipe" }));
+    expect(onAsk).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
   });
 });

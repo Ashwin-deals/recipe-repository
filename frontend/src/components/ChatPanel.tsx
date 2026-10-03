@@ -1,227 +1,325 @@
-import { useEffect, useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { createRecipe, sendChat, updateRecipe } from "../api/endpoints";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { createRecipe, updateRecipe } from "../api/endpoints";
+import { useChat, type ChatMessage } from "../hooks/useChat";
+import { useRecipeLibrary } from "../hooks/useRecipeLibrary";
 import { useShoppingList } from "../hooks/useShoppingList";
 import { useToast } from "../hooks/useToast";
 import { errorMessage } from "../lib/errors";
-import type { ChatProposal, ChatTurn, Recipe } from "../types";
+import type { ChatProposal, Recipe } from "../types";
+import { ChefMark } from "./ChefMark";
 import { Icon } from "./Icon";
-import { Sheet } from "./Sheet";
 
 const MAX_MESSAGE = 500;
-const HISTORY_TURNS = 8;
+const DRAG_CLOSE_PX = 110;
 
-const RECIPE_PROMPTS = ["Make it vegan", "No dairy, what can I use?", "Scale for 6 people", "Make it less spicy", "Use fewer ingredients"];
-const GENERAL_PROMPTS = ["What can I make with eggs, spinach and feta?", "How do I stop pasta sticking?", "Quick weeknight dinner ideas"];
-
-interface Message {
-  id: number;
-  role: "user" | "assistant";
-  text: string;
-  proposal?: ChatProposal | null;
-  items?: string[];
-  fallback?: boolean;
-  /** Set on error bubbles: the message to send again. */
-  retry?: string;
-}
+const RECIPE_PROMPTS = ["Make it vegan", "What can I use instead of buttermilk?", "Scale for 6 people", "What can I cook with eggs and tomatoes?"];
+// "Make it vegan" and "Scale for 6 people" need a recipe, so general mode offers a different starter.
+const GENERAL_PROMPTS = ["What can I cook with eggs and tomatoes?", "What can I use instead of buttermilk?", "Quick weeknight dinner ideas"];
 
 interface ChatPanelProps {
-  recipe: Recipe | null;
+  id: string;
+  /** Hide the panel and hand focus back to the launcher. */
   onClose: () => void;
-  /** Called after a proposal is saved, so the page can refresh. */
-  onRecipeSaved: (recipe: Recipe, replaced: boolean) => void;
 }
 
-/** "Ask the chef": a stateless chat; history lives only in this component. */
-export function ChatPanel({ recipe, onClose, onRecipeSaved }: ChatPanelProps) {
-  const id = useId();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const nextId = useRef(1);
-  const endRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+/**
+ * The "Ask the chef" panel: a non-modal dialog that springs out of the launcher (a bottom sheet
+ * on phones). The conversation itself lives in ChatProvider, so it survives route changes.
+ */
+export function ChatPanel({ id, onClose }: ChatPanelProps) {
+  const chat = useChat();
+  const library = useRecipeLibrary();
+  const ids = useId();
+  const panel = useRef<HTMLElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const drag = useRef<{ startY: number; dy: number } | null>(null);
+  const { open, messages, loading, recipe, focusRequest } = chat;
+  const loadRecipes = library.load;
+
+  // A closed panel stays mounted (so it can animate out) but must be unreachable.
+  useLayoutEffect(() => {
+    panel.current?.toggleAttribute("inert", !open);
+  }, [open]);
 
   useEffect(() => {
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    endRef.current?.scrollIntoView?.({ block: "end", behavior: reduce ? "auto" : "smooth" });
-  }, [messages, loading]);
+    if (open) loadRecipes();
+  }, [open, loadRecipes]);
 
-  async function send(text: string, base: Message[] = messages) {
-    const message = text.trim();
-    if (!message || loading) return;
-    const history: ChatTurn[] = base
-      .filter((m) => m.retry === undefined)
-      .slice(-HISTORY_TURNS)
-      .map((m) => ({ role: m.role, text: m.text }));
-    setMessages([...base, { id: nextId.current++, role: "user", text: message }]);
-    setInput("");
-    setLoading(true);
-    try {
-      const result = await sendChat(message, recipe?.id ?? null, history);
-      setMessages((current) => [
-        ...current,
-        {
-          id: nextId.current++,
-          role: "assistant",
-          text: result.reply,
-          proposal: result.proposal,
-          items: result.shopping_items,
-          fallback: result.source === "fallback",
-        },
-      ]);
-    } catch (err) {
-      setMessages((current) => [...current, { id: nextId.current++, role: "assistant", text: errorMessage(err), retry: message }]);
-    } finally {
-      setLoading(false);
-      inputRef.current?.focus();
-    }
-  }
+  useEffect(() => {
+    if (focusRequest) input.current?.focus();
+  }, [focusRequest]);
 
-  function retry(failed: Message) {
-    // Drop the error bubble and the user message it belongs to, then send that message again.
-    const index = messages.indexOf(failed);
-    const base = messages.slice(0, Math.max(0, index - 1));
-    void send(failed.retry ?? "", base);
-  }
+  useEffect(() => {
+    if (log.current) log.current.scrollTop = log.current.scrollHeight;
+  }, [messages.length, loading, open]);
+
+  // After a reply, keep typing where you were (only if focus is still in the chat).
+  const wasLoading = useRef(loading);
+  useEffect(() => {
+    if (wasLoading.current && !loading && panel.current?.contains(document.activeElement)) input.current?.focus();
+    wasLoading.current = loading;
+  }, [loading]);
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    void send(input);
+    void chat.send(chat.draft);
   }
 
-  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+  function onInputKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
-      void send(input);
+      void chat.send(chat.draft);
     }
   }
 
-  const titleId = `${id}-title`;
+  function onPanelKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape" && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      onClose();
+    }
+  }
+
+  // Phones: drag the sheet's handle or header down to close it.
+  function onDragStart(event: PointerEvent<HTMLElement>) {
+    if (event.pointerType === "mouse" || (event.target as HTMLElement).closest("button, select")) return;
+    if (!window.matchMedia?.("(max-width: 759px)").matches) return;
+    drag.current = { startY: event.clientY, dy: 0 };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    panel.current?.classList.add("is-dragging");
+  }
+  function onDragMove(event: PointerEvent<HTMLElement>) {
+    if (!drag.current || !panel.current) return;
+    drag.current.dy = Math.max(0, event.clientY - drag.current.startY);
+    panel.current.style.transform = `translateY(${drag.current.dy}px)`;
+  }
+  function onDragEnd() {
+    if (!drag.current || !panel.current) return;
+    const { dy } = drag.current;
+    drag.current = null;
+    panel.current.classList.remove("is-dragging");
+    panel.current.style.transform = "";
+    if (dy > DRAG_CLOSE_PX) onClose();
+  }
+
+  const choices = withRecipe(library.recipes ?? [], recipe);
   const prompts = recipe ? RECIPE_PROMPTS : GENERAL_PROMPTS;
+  const titleId = `${ids}-title`;
+  const dragProps = { onPointerDown: onDragStart, onPointerMove: onDragMove, onPointerUp: onDragEnd, onPointerCancel: onDragEnd };
   return (
-    <Sheet labelledBy={titleId} onClose={onClose} side="right" className="chat-sheet">
-      <header className="chat-head">
+    <section
+      ref={panel}
+      id={id}
+      className="chat-panel"
+      data-state={open ? "open" : "closed"}
+      role="dialog"
+      aria-modal="false"
+      aria-labelledby={titleId}
+      aria-hidden={!open || undefined}
+      onKeyDown={onPanelKeyDown}
+    >
+      <div className="chat-handle" aria-hidden="true" {...dragProps} />
+      <header className="chat-head" {...dragProps}>
+        <span className={`chat-avatar${loading ? " is-busy" : ""}`} aria-hidden="true">
+          <ChefMark />
+        </span>
         <div className="chat-head-text">
-          <h2 id={titleId} className="chat-title">
-            <Icon name="chat" /> Ask the chef
-          </h2>
-          <p className="chat-context">{recipe ? `About: ${recipe.title}` : "General kitchen help"}</p>
+          <h2 id={titleId} className="chat-title">Ask the chef</h2>
+          <p className="chat-status">{loading ? "Cooking up ideas…" : "Ready to help"}</p>
         </div>
-        <button type="button" className="btn btn-quiet chat-clear" onClick={() => setMessages([])} disabled={!messages.length || loading}>
-          Clear chat
+        <button type="button" className="chat-head-btn" aria-label="Minimize chat" title="Minimize" onClick={onClose}>
+          <Icon name="minus" />
         </button>
-        <button type="button" className="drawer-close chat-close" aria-label="Close" onClick={onClose}>
+        <button type="button" className="chat-head-btn" aria-label="Close chat" title="Close" onClick={onClose}>
           <Icon name="close" />
         </button>
       </header>
 
-      <div className="chat-log" role="log" aria-live="polite" aria-label="Conversation">
-        <div className="bubble bubble-assistant bubble-intro">
-          {recipe
-            ? `Hi! Ask me to adapt ${recipe.title}, swap an ingredient or change the servings.`
-            : "Hi! Tell me what's in your fridge, or ask any cooking question."}
-        </div>
-        {messages.map((m) =>
-          m.retry !== undefined ? (
-            <div key={m.id} className="bubble bubble-error" role="alert">
-              <p>{m.text}</p>
-              <button type="button" className="btn btn-quiet" onClick={() => retry(m)} disabled={loading}>
-                Try again
-              </button>
-            </div>
-          ) : (
-            <div key={m.id} className={`bubble bubble-${m.role}${m.fallback ? " bubble-fallback" : ""}`}>
+      <div className="chat-context-bar">
+        <label htmlFor={`${ids}-context`}>About:</label>
+        <select
+          id={`${ids}-context`}
+          className="chat-context-select"
+          value={recipe ? String(recipe.id) : ""}
+          onChange={(event) => chat.setRecipe(choices.find((r) => String(r.id) === event.target.value) ?? null)}
+        >
+          <option value="">All recipes</option>
+          {choices.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.title}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="btn-text chat-clear" onClick={chat.clear} disabled={!messages.length || loading}>
+          Clear chat
+        </button>
+      </div>
+
+      <div ref={log} className="chat-log" role="log" aria-live="polite" aria-label="Conversation">
+        <Bubble role="assistant" intro>
+          <p className="bubble-text">
+            {recipe
+              ? `Hi! Ask me to adapt ${recipe.title}, swap an ingredient or change the servings.`
+              : "Hi! Tell me what's in your fridge, or ask any cooking question."}
+          </p>
+        </Bubble>
+        {messages.map((m) => {
+          if (m.role === "note") {
+            return (
+              <p key={m.id} className="chat-divider">
+                <span>{m.text}</span>
+              </p>
+            );
+          }
+          if (m.retry !== undefined) {
+            return (
+              <Bubble key={m.id} role="assistant" error>
+                <div role="alert">
+                  <p>{m.text}</p>
+                  <button type="button" className="btn btn-quiet" onClick={() => chat.retry(m)} disabled={loading}>
+                    Try again
+                  </button>
+                </div>
+              </Bubble>
+            );
+          }
+          return (
+            <Bubble key={m.id} role={m.role} fallback={m.fallback}>
               <p className="bubble-text">{m.text}</p>
-              {m.proposal && <ProposalCard proposal={m.proposal} original={recipe} onSaved={onRecipeSaved} />}
-              {m.items && m.items.length > 0 && <ShoppingSuggestions items={m.items} />}
-            </div>
-          ),
-        )}
+              {m.proposal && <ProposalCard message={m} proposal={m.proposal} />}
+              {m.items && m.items.length > 0 && <ShoppingSuggestions message={m} items={m.items} />}
+            </Bubble>
+          );
+        })}
         {loading && (
-          <div className="bubble bubble-assistant chat-typing" role="status">
+          <div className="msg msg-assistant chat-typing" role="status">
+            <span className="chat-avatar chat-avatar-sm is-bouncing" aria-hidden="true">
+              <ChefMark />
+            </span>
+            <span className="typing-bubble" aria-hidden="true">
+              <span className="dot" />
+              <span className="dot" />
+              <span className="dot" />
+            </span>
             <span className="visually-hidden">The chef is typing…</span>
-            <span className="dot" aria-hidden="true" />
-            <span className="dot" aria-hidden="true" />
-            <span className="dot" aria-hidden="true" />
           </div>
         )}
-        <div ref={endRef} />
       </div>
 
       <footer className="chat-foot">
         <div className="chat-prompts" role="group" aria-label="Suggested questions">
           {prompts.map((prompt) => (
-            <button key={prompt} type="button" className="chip chat-chip" onClick={() => void send(prompt)} disabled={loading}>
+            <button key={prompt} type="button" className="chip chat-chip" onClick={() => void chat.send(prompt)} disabled={loading}>
               {prompt}
             </button>
           ))}
         </div>
         <form className="chat-form" onSubmit={onSubmit}>
-          <label className="visually-hidden" htmlFor={`${id}-input`}>
+          <label className="visually-hidden" htmlFor={`${ids}-input`}>
             Message the chef
           </label>
           <textarea
-            ref={inputRef}
-            id={`${id}-input`}
+            ref={input}
+            id={`${ids}-input`}
             rows={2}
             maxLength={MAX_MESSAGE}
-            value={input}
+            value={chat.draft}
             placeholder={recipe ? "e.g. make it gluten-free" : "e.g. what can I cook with rice and lentils?"}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={onKeyDown}
-            aria-describedby={`${id}-count ${id}-note`}
+            onChange={(event) => chat.setDraft(event.target.value)}
+            onKeyDown={onInputKeyDown}
+            aria-describedby={`${ids}-count ${ids}-note`}
           />
-          <button className="btn btn-primary chat-send" type="submit" disabled={loading || !input.trim()} aria-label="Send">
+          <button className="btn btn-primary chat-send" type="submit" disabled={loading || !chat.draft.trim()} aria-label="Send">
             <Icon name="send" />
           </button>
         </form>
         <div className="chat-meta">
-          <p id={`${id}-note`} className="chat-note">AI suggestions can be wrong. Check ingredients for allergies.</p>
-          <p id={`${id}-count`} className="chat-count num" aria-live="off">
-            {input.length}/{MAX_MESSAGE}
+          <p id={`${ids}-note`} className="chat-note">AI suggestions can be wrong. Check ingredients for allergies.</p>
+          <p id={`${ids}-count`} className="chat-count num" aria-live="off">
+            {chat.draft.length}/{MAX_MESSAGE}
           </p>
         </div>
       </footer>
-    </Sheet>
+    </section>
   );
 }
 
-type SaveState = { kind: "idle" } | { kind: "saving" } | { kind: "saved"; text: string } | { kind: "dismissed" } | { kind: "error"; text: string };
+/** Recipes for the context picker, making sure the current one is listed even before all recipes load. */
+function withRecipe(recipes: Recipe[], current: Recipe | null): Recipe[] {
+  const list = current && !recipes.some((r) => r.id === current.id) ? [current, ...recipes] : recipes;
+  return [...list].sort((a, b) => a.title.localeCompare(b.title));
+}
+
+interface BubbleProps {
+  role: "user" | "assistant";
+  intro?: boolean;
+  error?: boolean;
+  fallback?: boolean;
+  children: ReactNode;
+}
+
+/** One message: the chef's on the left with the avatar, yours on the right. */
+function Bubble({ role, intro, error, fallback, children }: BubbleProps) {
+  const classes = ["bubble", error ? "bubble-error" : `bubble-${role}`, intro && "bubble-intro", fallback && "bubble-fallback"];
+  return (
+    <div className={`msg msg-${role}`}>
+      {role === "assistant" && (
+        <span className="chat-avatar chat-avatar-sm" aria-hidden="true">
+          <ChefMark />
+        </span>
+      )}
+      <div className={classes.filter(Boolean).join(" ")}>
+        <span className="visually-hidden">{role === "user" ? "You:" : "Chef:"}</span>
+        {children}
+      </div>
+    </div>
+  );
+}
 
 const normalise = (line: string) => line.trim().toLowerCase();
 
 /** Before/after view of a proposed recipe. Nothing is saved until a button is pressed. */
-function ProposalCard({ proposal, original, onSaved }: { proposal: ChatProposal; original: Recipe | null; onSaved: (recipe: Recipe, replaced: boolean) => void }) {
+function ProposalCard({ message, proposal }: { message: ChatMessage; proposal: ChatProposal }) {
+  const chat = useChat();
+  const library = useRecipeLibrary();
   const toast = useToast();
   const prepId = useId();
-  const [state, setState] = useState<SaveState>({ kind: "idle" });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [prep, setPrep] = useState(proposal.prep_time === null ? "" : String(proposal.prep_time));
+  const original = message.about ?? null;
+  const outcome = message.outcome;
 
-  if (state.kind === "dismissed") return <p className="proposal-dismissed">Suggestion dismissed.</p>;
+  if (outcome?.kind === "dismissed") return <p className="proposal-dismissed">Suggestion dismissed.</p>;
 
   const before = new Set((original?.lines ?? []).map(normalise));
   const after = new Set(proposal.ingredients.map(normalise));
   const removed = (original?.lines ?? []).filter((line) => !after.has(normalise(line)));
 
   async function save(replace: boolean) {
+    if (saving) return;
     if (!prep.trim()) {
-      setState({ kind: "error", text: "Add a prep time first." });
+      setError("Add a prep time first.");
       return;
     }
-    setState({ kind: "saving" });
+    setSaving(true);
+    setError(null);
     const input = { title: proposal.title, prep_time: prep, category: proposal.category, ingredients: proposal.ingredients.join("\n") };
     try {
       const { recipe } = replace && original ? await updateRecipe(original.id, input) : await createRecipe(input);
       const text = replace ? `Updated “${recipe.title}”.` : `Saved “${recipe.title}” as a new recipe.`;
-      setState({ kind: "saved", text });
+      chat.patchMessage(message.id, { outcome: { kind: "saved", text, recipeId: recipe.id } });
       toast.show(text);
-      onSaved(recipe, replace);
+      library.notify({ kind: "saved", recipe, replaced: replace });
     } catch (err) {
-      setState({ kind: "error", text: errorMessage(err) });
+      setError(errorMessage(err));
+    } finally {
+      setSaving(false);
     }
   }
 
-  const done = state.kind === "saved";
+  const done = outcome?.kind === "saved";
   return (
     <section className="proposal" aria-label={`Proposed recipe: ${proposal.title}`}>
       <p className="proposal-kicker">Proposed recipe</p>
@@ -263,20 +361,25 @@ function ProposalCard({ proposal, original, onSaved }: { proposal: ChatProposal;
           </li>
         ))}
       </ul>
-      {state.kind === "error" && <p className="proposal-error" role="alert">{state.text}</p>}
+      {error && <p className="proposal-error" role="alert">{error}</p>}
       {done ? (
-        <p className="proposal-saved" role="status">{state.text}</p>
+        <p className="proposal-saved" role="status">
+          {outcome.text}{" "}
+          <Link className="link-arrow" to={`/recipes/${outcome.recipeId}`}>
+            Open recipe <Icon name="arrow" />
+          </Link>
+        </p>
       ) : (
         <div className="proposal-actions">
-          <button type="button" className="btn btn-primary" onClick={() => void save(false)} disabled={state.kind === "saving"}>
+          <button type="button" className="btn btn-primary" onClick={() => void save(false)} aria-busy={saving}>
             Apply as new recipe
           </button>
           {original && (
-            <button type="button" className="btn btn-ghost" onClick={() => void save(true)} disabled={state.kind === "saving"}>
+            <button type="button" className="btn btn-ghost" onClick={() => void save(true)} aria-busy={saving}>
               Replace this recipe
             </button>
           )}
-          <button type="button" className="btn btn-quiet" onClick={() => setState({ kind: "dismissed" })} disabled={state.kind === "saving"}>
+          <button type="button" className="btn btn-quiet" onClick={() => chat.patchMessage(message.id, { outcome: { kind: "dismissed" } })} disabled={saving}>
             Dismiss
           </button>
         </div>
@@ -286,18 +389,22 @@ function ProposalCard({ proposal, original, onSaved }: { proposal: ChatProposal;
 }
 
 /** Items the chef suggests buying; each is added to the list only on click. */
-function ShoppingSuggestions({ items }: { items: string[] }) {
+function ShoppingSuggestions({ message, items }: { message: ChatMessage; items: string[] }) {
+  const chat = useChat();
   const shopping = useShoppingList();
   const toast = useToast();
-  const [added, setAdded] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const added = new Set(message.added ?? []);
 
   async function add(toAdd: string[]) {
+    if (busy) return;
     setBusy(true);
+    const done = [...added];
     try {
       for (const item of toAdd) {
         await shopping.addItem(item);
-        setAdded((current) => new Set(current).add(item));
+        done.push(item);
+        chat.patchMessage(message.id, { added: [...done] });
       }
       toast.show(toAdd.length === 1 ? `Added “${toAdd[0]}” to the list.` : `Added ${toAdd.length} items to the list.`);
     } catch (err) {
@@ -317,7 +424,7 @@ function ShoppingSuggestions({ items }: { items: string[] }) {
             {added.has(item) ? (
               <span className="chat-item-added">Added</span>
             ) : (
-              <button type="button" className="btn btn-quiet" onClick={() => void add([item])} disabled={busy} aria-label={`Add ${item} to list`}>
+              <button type="button" className="btn btn-quiet" onClick={() => void add([item])} aria-busy={busy} aria-label={`Add ${item} to list`}>
                 Add to list
               </button>
             )}
@@ -325,7 +432,7 @@ function ShoppingSuggestions({ items }: { items: string[] }) {
         ))}
       </ul>
       {remaining.length > 1 && (
-        <button type="button" className="btn btn-ink" onClick={() => void add(remaining)} disabled={busy}>
+        <button type="button" className="btn btn-ink" onClick={() => void add(remaining)} aria-busy={busy}>
           Add all {remaining.length} to list
         </button>
       )}

@@ -1,9 +1,12 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { CartFab } from "./components/CartFab";
+import { ChatProvider } from "./components/ChatProvider";
+import { ChatWidget } from "./components/ChatWidget";
 import { ConfigProvider } from "./components/ConfigProvider";
 import { Nav } from "./components/Nav";
 import { OfflineBanner } from "./components/OfflineBanner";
+import { RecipeLibraryProvider } from "./components/RecipeLibraryProvider";
 import { ShoppingListProvider } from "./components/ShoppingListProvider";
 import { ToastProvider } from "./components/Toast";
 import { UpdatePrompt } from "./components/UpdatePrompt";
@@ -18,7 +21,11 @@ export function Providers({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider>
       <ToastProvider>
-        <ShoppingListProvider>{children}</ShoppingListProvider>
+        <ShoppingListProvider>
+          <ChatProvider>
+            <RecipeLibraryProvider>{children}</RecipeLibraryProvider>
+          </ChatProvider>
+        </ShoppingListProvider>
       </ToastProvider>
     </ConfigProvider>
   );
@@ -50,6 +57,7 @@ function Layout({ children }: { children: ReactNode }) {
         {children}
       </main>
       <CartFab />
+      <ChatWidget />
     </>
   );
 }
