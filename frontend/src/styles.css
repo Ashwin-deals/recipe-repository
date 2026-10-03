@@ -158,6 +158,9 @@ main:focus { outline: none; }
 
 .wrap { max-width: 1360px; margin: 0 auto; padding: 24px 16px calc(var(--launcher) + var(--fab-gap) + 24px); }
 @media (min-width: 760px) { .wrap { padding: 36px 32px calc(var(--launcher) + var(--fab-gap) + 32px); } }
+/* Below 1024px the cart button (60px, 14px above the launcher) stacks on the launcher, so leave
+   room for both: the end of every page can then scroll clear of them. */
+@media (max-width: 1023px) { .wrap { padding-bottom: calc(var(--launcher) + var(--fab-gap) + 14px + 60px + 24px); } }
 
 /* ---------- Type helpers ---------- */
 .eyebrow {
