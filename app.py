@@ -94,6 +94,7 @@ def load_config() -> dict:
         "AI_RATE_LIMIT": _env("AI_RATE_LIMIT", "10/minute"),
         "CHAT_RATE_LIMIT": _env("CHAT_RATE_LIMIT", "15/minute"),
         "AI_TIMEOUT_SECONDS": _env_int("AI_TIMEOUT_SECONDS", 30),
+        "GEMINI_THINKING_BUDGET": _env_int("GEMINI_THINKING_BUDGET", 0),
         "GCS_BUCKET": _env("GCS_BUCKET"),
         "GCS_DB_OBJECT": _env("GCS_DB_OBJECT", "cartchef.db"),
         "GCS_BACKUP_DELAY_SECONDS": _env_int("GCS_BACKUP_DELAY_SECONDS", 2),

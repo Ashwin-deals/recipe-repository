@@ -121,6 +121,17 @@ def test_ai_mode(config, mode):
     assert gcp.ai_mode(config) == mode
 
 
+@pytest.mark.parametrize("budget, expected", [(None, 0), (0, 0), (512, 512), (-1, None)])
+def test_thinking_is_off_by_default_and_configurable(fake_sdk, budget, expected):
+    config = {**API_KEY_CONFIG, "AI_TIMEOUT_SECONDS": 30}
+    if budget is not None:
+        config["GEMINI_THINKING_BUDGET"] = budget
+    FakeGenaiClient.replies.append("{}")
+    gcp.generate_text(config, "prompt")
+    thinking = FakeGenaiClient.requests[0]["config"].thinking_config
+    assert (thinking.thinking_budget if thinking else None) == expected
+
+
 def test_api_key_client_is_created_lazily_and_cached(fake_sdk):
     config = {**API_KEY_CONFIG, "AI_TIMEOUT_SECONDS": 30}
     assert fake_sdk.instances == []

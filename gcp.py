@@ -341,6 +341,10 @@ def generate_text(config, prompt: str, *, image: bytes | None = None, mime_type:
         if image is not None:
             contents.append(types.Part.from_bytes(data=image, mime_type=mime_type))
         contents.append(prompt)
+        # Thinking adds seconds to every reply and these are short extraction/chat turns.
+        # -1 sends nothing, for models that can't turn thinking off or don't support the setting.
+        budget = config.get("GEMINI_THINKING_BUDGET", 0)
+        thinking = types.ThinkingConfig(thinking_budget=budget) if budget != -1 else None
         response = _gemini_client(config).models.generate_content(
             model=config["GEMINI_MODEL"],
             contents=contents,
@@ -349,6 +353,7 @@ def generate_text(config, prompt: str, *, image: bytes | None = None, mime_type:
                 response_mime_type="application/json",
                 temperature=temperature,
                 max_output_tokens=MAX_OUTPUT_TOKENS,
+                thinking_config=thinking,
             ),
         )
         text = response.text
