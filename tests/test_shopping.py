@@ -52,6 +52,13 @@ def test_awkward_merged_amounts_read_as_compound(db):
     assert labels(db) == ["2 cups + 1 tbsp flour"]
 
 
+def test_list_amounts_avoid_thirds_of_a_spoon(db):
+    shopping.add_line(db, "2 tsp baking powder", multiplier=2)
+    shopping.add_line(db, "1 tsp cumin")
+    shopping.add_line(db, "2 tsp cumin, ground")
+    assert sorted(labels(db)) == ["1 tbsp cumin", "4 tsp baking powder"]
+
+
 def test_compound_amounts_merge_with_plain_ones(db):
     shopping.add_line(db, "1 cup + 2 tbsp milk")
     assert shopping.add_line(db, "1 cup milk") == "merged"

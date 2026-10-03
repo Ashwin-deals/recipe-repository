@@ -162,6 +162,11 @@ def _decompose(qty: Fraction, unit: str | None) -> list[tuple[Fraction, str | No
     return None
 
 
+def _reads_cleanly(value: Fraction, unit: str | None) -> bool:
+    """Halves and quarters in any unit, plus thirds of a cup ("1/3 cup" yes, "1 1/3 tbsp" no)."""
+    return value.denominator in (1, 2, 4) or (value.denominator == 3 and unit == "cup")
+
+
 def normalize(qty: Fraction, unit: str | None, *, compound: bool = False) -> tuple[Fraction, str | None]:
     """Move a quantity into the largest sensible unit (3 tsp -> 1 tbsp, 1500 g -> 1 1/2 kg).
 
@@ -177,13 +182,12 @@ def normalize(qty: Fraction, unit: str | None, *, compound: bool = False) -> tup
         value = convert(qty, unit, candidate)
         if value < _MIN_VALUE.get(candidate, 1):
             continue
-        if (
-            candidate == unit
-            or value.denominator in (1, 2, 4)
-            or (value.denominator == 3 and candidate == "cup")
-            or (compound and _decompose(value, candidate))
-        ):
+        if candidate == unit or _reads_cleanly(value, candidate):
             return value, candidate
+        if compound:
+            parts = _decompose(value, candidate)
+            if parts and all(_reads_cleanly(part, part_unit) for part, part_unit in parts):
+                return value, candidate
     return qty, unit
 
 
