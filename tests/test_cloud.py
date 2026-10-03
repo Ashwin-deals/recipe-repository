@@ -2,6 +2,8 @@ import logging
 import sqlite3
 import threading
 
+import pytest
+
 import database
 import gcp
 
@@ -241,3 +243,113 @@ def test_secret_key_is_generated_once_and_reused(make_app):
     first = make_app(SECRET_KEY=None).config["SECRET_KEY"]
     second = make_app(SECRET_KEY=None).config["SECRET_KEY"]
     assert first == second and len(first) == 64
+
+
+class FakeBigQuery:
+    """Stands in for bigquery.Client: records tables and inserts; queue errors per call."""
+
+    def __init__(self, *, exists=False, get_error=None, create_error=None, insert_not_found=0):
+        self.exists, self.get_error, self.create_error = exists, get_error, create_error
+        self.insert_not_found = insert_not_found
+        self.get_calls, self.created, self.inserted = 0, [], []
+
+    def __call__(self, project=None):  # used as the Client class
+        return self
+
+    def get_table(self, table_id, timeout=None):
+        from google.api_core.exceptions import NotFound
+        self.get_calls += 1
+        if self.get_error:
+            raise self.get_error
+        if not self.exists:
+            raise NotFound("table not found")
+
+    def create_table(self, table, exists_ok=False, timeout=None):
+        if self.create_error:
+            raise self.create_error
+        self.created.append(table)
+        self.exists = True
+
+    def insert_rows_json(self, table_id, rows, timeout=None):
+        from google.api_core.exceptions import NotFound
+        if self.insert_not_found:
+            self.insert_not_found -= 1
+            raise NotFound("table not ready")
+        self.inserted.append((table_id, rows))
+        return []
+
+
+BQ_CONFIG = {"GOOGLE_CLOUD_PROJECT": "p", "BIGQUERY_DATASET": "d", "BIGQUERY_TABLE": "events"}
+ROW = {"type": "item_checked", "payload": "{}", "created_at": "2026-10-03T12:00:00+00:00"}
+
+
+@pytest.fixture
+def fake_bq(monkeypatch):
+    from google.cloud import bigquery
+
+    def install(**kwargs):
+        fake = FakeBigQuery(**kwargs)
+        monkeypatch.setattr(bigquery, "Client", fake)
+        monkeypatch.setattr(gcp, "_bq_clients", {})
+        monkeypatch.setattr(gcp, "_bq_ready_tables", set())
+        monkeypatch.setattr(gcp.time, "sleep", lambda seconds: None)
+        return fake
+    return install
+
+
+def send(rows=(ROW,)):
+    gcp.mirror_events(BQ_CONFIG, list(rows)).result(timeout=5)
+
+
+def test_missing_events_table_is_created_with_the_schema(fake_bq):
+    fake = fake_bq()
+    send()
+    (table,) = fake.created
+    assert table.table_id == "events" and table.dataset_id == "d" and table.project == "p"
+    assert [(f.name, f.field_type, f.mode) for f in table.schema] == [
+        ("type", "STRING", "REQUIRED"), ("payload", "STRING", "REQUIRED"), ("created_at", "TIMESTAMP", "REQUIRED"),
+    ]
+    assert table.time_partitioning.field == "created_at"
+    assert fake.inserted == [("p.d.events", [ROW])]
+
+
+def test_existing_table_is_left_alone_and_checked_once(fake_bq):
+    fake = fake_bq(exists=True)
+    send()
+    send()
+    assert fake.created == [] and fake.get_calls == 1 and len(fake.inserted) == 2
+
+
+def test_inserts_into_a_just_created_table_are_retried(fake_bq):
+    fake = fake_bq(insert_not_found=2)
+    send()
+    assert len(fake.created) == 1 and fake.inserted == [("p.d.events", [ROW])]
+
+
+def test_missing_dataset_is_logged_and_retried_on_the_next_batch(fake_bq, caplog):
+    from google.api_core.exceptions import NotFound
+    fake = fake_bq(create_error=NotFound("Dataset p:d was not found"))
+    with caplog.at_level(logging.ERROR, logger="cartchef.gcp"):
+        send()
+    assert "BigQuery failed" in caplog.text and fake.inserted == []
+    fake.create_error = None
+    send()
+    assert len(fake.created) == 1 and len(fake.inserted) == 1
+
+
+def test_no_permission_to_check_the_table_still_inserts(fake_bq, caplog):
+    from google.api_core.exceptions import Forbidden
+    fake = fake_bq(exists=True, get_error=Forbidden("bigquery.tables.get denied"))
+    with caplog.at_level(logging.WARNING, logger="cartchef.gcp"):
+        send()
+    assert "permission denied" in caplog.text and fake.created == [] and len(fake.inserted) == 1
+
+
+def test_schema_json_matches_the_rows_the_app_sends(app):
+    schema = gcp.events_schema_json()
+    assert [f["name"] for f in schema] == ["type", "payload", "created_at"]
+    conn = database.connect(app.config["DATABASE_PATH"])
+    database.log_event(conn, "item_checked", {"item_id": 1})
+    (row,) = conn.pending_events
+    conn.close()
+    assert set(row) == {f["name"] for f in schema} and all(row[f["name"]] is not None for f in schema)

@@ -203,7 +203,11 @@ All are off by default and turn on only when their env vars are set. Cloud failu
 The database is backed up in a background thread a couple of seconds after a write, so requests never wait on
 Cloud Storage and a burst of writes is a single upload. A backup still pending at shutdown runs before the process exits.
 
-The BigQuery table needs the columns `type STRING`, `payload STRING` (JSON text) and `created_at TIMESTAMP`. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, counted in the `events` table).
+The BigQuery events table has three `REQUIRED` columns: `type STRING`, `payload STRING` (JSON text) and
+`created_at TIMESTAMP` (UTC). The app creates it on its first insert if it's missing, partitioned by day on
+`created_at`; the dataset must already exist. To create it yourself, `gcp.events_schema_json()` prints the schema
+for the console's "Edit as text" box. The service account needs BigQuery Data Editor on the dataset (it includes
+creating tables) and BigQuery Job User on the project for queries. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, counted in the `events` table).
 
 ## Snap-a-recipe
 

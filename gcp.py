@@ -21,6 +21,7 @@ import re
 import sqlite3
 import tempfile
 import threading
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
@@ -644,17 +645,72 @@ atexit.register(flush_backup)
 
 _bq_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bigquery")
 _bq_clients: dict[str, object] = {}
+_bq_ready_tables: set[str] = set()
+
+# The rows database.log_event builds: (name, type, mode, description). Every field is always set.
+EVENTS_SCHEMA = (
+    ("type", "STRING", "REQUIRED", "Event name, e.g. list_added or item_checked."),
+    ("payload", "STRING", "REQUIRED", "Event details as JSON text; read with JSON_VALUE(payload, '$.field')."),
+    ("created_at", "TIMESTAMP", "REQUIRED", "When the event happened (UTC)."),
+)
+# A table created moments ago can briefly reject streaming inserts.
+_NEW_TABLE_RETRY_SECONDS = (2, 4, 8)
+
+
+def events_schema_json() -> list[dict]:
+    """EVENTS_SCHEMA in BigQuery's JSON schema format (the console's "Edit as text")."""
+    return [{"name": n, "type": t, "mode": m, "description": d} for n, t, m, d in EVENTS_SCHEMA]
+
+
+def _ensure_events_table(client, table_id: str) -> bool:
+    """Create the events table if it's missing. Returns True if it was just created.
+
+    The dataset must already exist: creating datasets needs a broader role than the app should have.
+    """
+    if table_id in _bq_ready_tables:
+        return False
+    from google.api_core.exceptions import Forbidden, NotFound
+    from google.cloud import bigquery
+
+    created = False
+    try:
+        client.get_table(table_id, timeout=30)
+    except Forbidden:
+        # A role that may insert rows but not read table metadata: just try the inserts.
+        log.warning("Can't check BigQuery table %s (permission denied); inserting without creating it.", table_id)
+    except NotFound:
+        table = bigquery.Table(table_id, schema=[
+            bigquery.SchemaField(name, type_, mode=mode, description=description)
+            for name, type_, mode, description in EVENTS_SCHEMA
+        ])
+        # Daily partitions keep date-filtered dashboard queries cheap.
+        table.time_partitioning = bigquery.TimePartitioning(field="created_at")
+        client.create_table(table, exists_ok=True, timeout=30)
+        log.info("Created BigQuery table %s for app events.", table_id)
+        created = True
+    _bq_ready_tables.add(table_id)
+    return created
 
 
 def _insert_rows(config, rows: list[dict]) -> None:
     try:
+        from google.api_core.exceptions import NotFound
         from google.cloud import bigquery
 
         project = config["GOOGLE_CLOUD_PROJECT"]
         if project not in _bq_clients:
             _bq_clients[project] = bigquery.Client(project=project)
+        client = _bq_clients[project]
         table = f"{project}.{config['BIGQUERY_DATASET']}.{config['BIGQUERY_TABLE']}"
-        errors = _bq_clients[project].insert_rows_json(table, rows, timeout=30)
+        retries = _NEW_TABLE_RETRY_SECONDS if _ensure_events_table(client, table) else ()
+        for delay in (*retries, None):
+            try:
+                errors = client.insert_rows_json(table, rows, timeout=30)
+                break
+            except NotFound:
+                if delay is None:
+                    raise
+                time.sleep(delay)
         if errors:
             log.warning("BigQuery rejected %d event rows: %s", len(errors), errors[:3])
     except Exception:
