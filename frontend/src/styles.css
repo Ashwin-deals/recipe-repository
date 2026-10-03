@@ -47,7 +47,6 @@
   --display: "Fraunces Variable", "Fraunces", Georgia, serif;
   --sans: "Bricolage Grotesque Variable", "Bricolage Grotesque", "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --wordmark: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
 
   --step--1: 0.8125rem;
   --step-0: 1rem;
@@ -216,15 +215,22 @@ main:focus { outline: none; }
   min-height: 64px; padding: 8px 16px;
   background: var(--bg); border-bottom: 2px solid var(--line);
 }
-/* Logo and wordmark: unchanged from the original identity. */
-.brand { display: inline-flex; align-items: center; gap: 10px; min-height: var(--tap); margin-right: auto; text-decoration: none; color: var(--ink); }
+/* Logo and wordmark, in the app's language: a lime block with a hard border and offset shadow
+   (like the active nav button), and the display face with a lime rule under "Chef". */
+.brand { display: inline-flex; align-items: center; gap: 12px; min-height: var(--tap); margin-right: auto; text-decoration: none; color: var(--ink); }
 .brand-mark {
-  display: grid; place-items: center; width: 38px; height: 38px; border-radius: 11px;
-  background: #c8442a; color: #fbf5ea; transform: rotate(-4deg); box-shadow: 0 3px 0 #a3361f;
+  display: grid; place-items: center; width: 40px; height: 40px; border-radius: 4px;
+  background: var(--accent); color: var(--on-accent); border: 2px solid var(--line);
+  box-shadow: 3px 3px 0 var(--shadow); transform: rotate(-4deg);
+  transition: transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
-.brand-mark .icon { width: 24px; height: 24px; stroke-width: 1.8; }
-.brand-name { font: 700 1.45rem/1 var(--wordmark); letter-spacing: -0.02em; }
-.brand-name span { color: #c8442a; font-style: italic; }
+.brand:hover .brand-mark { transform: rotate(0deg) translate(-1px, -1px); box-shadow: 4px 4px 0 var(--shadow); }
+.brand-mark .icon { width: 24px; height: 24px; stroke-width: 2; }
+.brand-name { font: 760 1.5rem/1 var(--display); letter-spacing: -0.035em; }
+.brand-name span {
+  text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 0.16em;
+  text-underline-offset: 0.14em; text-decoration-skip-ink: none;
+}
 
 .theme-toggle {
   display: grid; place-items: center; width: 44px; height: 44px; flex: none;
