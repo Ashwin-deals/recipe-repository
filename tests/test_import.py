@@ -17,7 +17,7 @@ from werkzeug.datastructures import FileStorage
 import database
 import gcp
 from app import create_app, load_env_file
-from conftest import API_KEY_CONFIG, FAKE_API_KEY, JPEG, PNG, WEBP, upload
+from conftest import API_KEY_CONFIG, FAKE_API_KEY, JPEG, PNG, WEBP, upload, user_id
 
 GOOD_RECIPE = {"title": "Pesto Pasta", "prep_time_minutes": 20, "category": "Dinner",
                "ingredients": ["200 g pasta", "1/2 cup pesto"]}
@@ -99,7 +99,8 @@ def test_settings_from_env(tmp_path, monkeypatch):
     for name, value in {"GEMINI_API_KEY": FAKE_API_KEY, "GEMINI_MODEL": "model-x", "AI_DAILY_CAP": "7",
                         "AI_ENABLED": "0"}.items():
         monkeypatch.setenv(name, value)
-    app = create_app({"LOAD_DOTENV": False, "DATABASE_PATH": str(tmp_path / "x.db"), "SEED_DEMO_DATA": False})
+    app = create_app({"LOAD_DOTENV": False, "APP_ENV": "development", "DATABASE_PATH": str(tmp_path / "x.db"),
+                      "SEED_DEMO_DATA": False})
     assert app.config["GEMINI_API_KEY"] == FAKE_API_KEY
     assert (app.config["GEMINI_MODEL"], app.config["AI_DAILY_CAP"], app.config["AI_ENABLED"]) == ("model-x", 7, False)
     assert gcp.ai_mode(app.config) == "disabled"
@@ -161,8 +162,8 @@ def test_vertex_express_client_sends_the_key_to_vertex(fake_sdk):
 
 def test_use_vertexai_setting_is_read_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
-    app = create_app({"LOAD_DOTENV": False, "DATABASE_PATH": str(tmp_path / "x.db"), "SEED_DEMO_DATA": False,
-                      **API_KEY_CONFIG})
+    app = create_app({"LOAD_DOTENV": False, "APP_ENV": "development", "DATABASE_PATH": str(tmp_path / "x.db"),
+                      "SEED_DEMO_DATA": False, **API_KEY_CONFIG})
     assert gcp.ai_mode(app.config) == "vertex-express"
 
 
@@ -492,23 +493,31 @@ def test_daily_cap_returns_429_and_persists_across_restarts(make_app, gemini):
     assert [client.post("/api/import", data={"text": "Pasta"}).status_code for _ in range(2)] == [200, 200]
 
     response = client.post("/api/import", data={"text": "Pasta"})
-    assert response.status_code == 429 and "Today's AI import limit" in response.json["error"]
+    assert response.status_code == 429 and "Today's AI limit" in response.json["error"]
     assert len(gemini.calls) == 2
 
     restarted = make_app(**API_KEY_CONFIG, AI_DAILY_CAP=2).test_client()  # same database file
     assert restarted.post("/api/import", data={"text": "Pasta"}).status_code == 429
     conn = database.connect(app.config["DATABASE_PATH"])
-    assert database.ai_calls_today(conn) == 2
+    assert database.ai_calls_today(conn, user_id(conn)) == 2
     conn.close()
 
 
-def test_daily_cap_counts_events_and_resets_each_day(db):
-    assert [database.consume_ai_call(db, 2, feature="import") for _ in range(3)] == [True, True, False]
-    assert database.ai_calls_today(db) == 2
+def test_daily_cap_counts_events_and_resets_each_day(db, uid):
+    assert [database.consume_ai_call(db, uid, 2, 10, feature="import") for _ in range(3)] == [None, None, "all"]
+    assert database.ai_calls_today(db, uid) == 2
     db.execute("UPDATE events SET created_at = datetime('now', '-1 day') WHERE type = 'ai_call'")
     db.commit()
-    assert database.ai_calls_today(db) == 0 and database.consume_ai_call(db, 2) is True
-    assert database.consume_ai_call(db, 0) is False
+    assert database.ai_calls_today(db, uid) == 0 and database.consume_ai_call(db, uid, 2, 10) is None
+    assert database.consume_ai_call(db, uid, 0, 10) == "all"
+
+
+def test_daily_cap_per_user(db, uid, app):
+    other = app.test_client(email="other@example.com")
+    other_id = user_id(db, "other@example.com")
+    assert [database.consume_ai_call(db, uid, 10, 2) for _ in range(3)] == [None, None, "user"]
+    assert database.consume_ai_call(db, other_id, 10, 2) is None  # someone else still has their allowance
+    assert database.ai_calls_today(db) == 3 and other.get("/api/insights").json["ai_calls"] == 1
 
 
 def test_import_logs_an_event_without_image_data(ai_app, ai_client, gemini):

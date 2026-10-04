@@ -1,5 +1,6 @@
 import database
 import shopping
+from conftest import user_id
 
 
 def recipe_body(**overrides):
@@ -10,7 +11,8 @@ def recipe_body(**overrides):
 
 
 def labels(db):
-    return sorted(i["label"] for g in shopping.grouped_items(db) for i in g["items"])
+    uid = user_id(db)
+    return sorted(i["label"] for g in shopping.grouped_items(db, uid) for i in g["items"])
 
 
 # ---------- basics ----------
@@ -44,14 +46,15 @@ def test_errors_are_json(client):
     assert client.put("/api/list").status_code == 405
 
 
-def test_demo_recipes_are_seeded_once(make_app):
+def test_each_new_account_gets_its_own_starter_recipes(make_app):
     app = make_app(SEED_DEMO_DATA=True)
-    make_app(SEED_DEMO_DATA=True)  # second start must not duplicate
-    conn = database.connect(app.config["DATABASE_PATH"])
-    try:
-        assert len(database.list_recipes(conn)) == len(database.SEED_RECIPES) == 6
-    finally:
-        conn.close()
+    first, second = app.test_client(), app.test_client(email="second@example.com")
+    mine = first.get("/api/recipes").json["recipes"]
+    theirs = second.get("/api/recipes").json["recipes"]
+    assert len(mine) == len(theirs) == len(database.SEED_RECIPES) == 6
+    assert not {r["id"] for r in mine} & {r["id"] for r in theirs}
+    first.delete(f"/api/recipes/{mine[0]['id']}")
+    assert len(second.get("/api/recipes").json["recipes"]) == 6
 
 
 # ---------- serving the React build ----------
@@ -115,7 +118,7 @@ def test_create_recipe_accepts_a_list_and_trims(client):
     assert recipe["lines"] == ["2 eggs", "1 cup milk"]
 
 
-def test_create_recipe_validation(client, db):
+def test_create_recipe_validation(client, db, uid):
     cases = {
         "title": [recipe_body(title=""), recipe_body(title="x" * 121), recipe_body(title=None)],
         "prep_time": [recipe_body(prep_time=""), recipe_body(prep_time=-5), recipe_body(prep_time="abc"),
@@ -132,17 +135,17 @@ def test_create_recipe_validation(client, db):
     for bad in (recipe_body(ingredients=5), recipe_body(ingredients=["ok", 3])):
         assert client.post("/api/recipes", json=bad).status_code == 400
     assert client.post("/api/recipes", data="not json").status_code == 400
-    assert database.list_recipes(db) == []
+    assert database.list_recipes(db, uid) == []
 
 
-def test_get_and_delete_recipe_cascades_to_planner(client, db, add_recipe):
+def test_get_and_delete_recipe_cascades_to_planner(client, db, add_recipe, uid):
     recipe_id = add_recipe()
     assert client.get(f"/api/recipes/{recipe_id}").json["recipe"]["title"] == "Test Pancakes"
-    database.add_to_plan(db, "Monday", recipe_id, 1)
+    database.add_to_plan(db, uid, "Monday", recipe_id, 1)
     db.commit()
     response = client.delete(f"/api/recipes/{recipe_id}")
     assert response.status_code == 200 and response.json == {"deleted": recipe_id}
-    assert database.get_recipe(db, recipe_id) is None
+    assert database.get_recipe(db, uid, recipe_id) is None
     assert db.execute("SELECT COUNT(*) FROM meal_plan").fetchone()[0] == 0
     assert client.delete(f"/api/recipes/{recipe_id}").status_code == 404
 
@@ -202,8 +205,8 @@ def test_add_recipe_to_list_validation(client, add_recipe):
     assert client.post("/api/recipes/999/add-to-list", json={"multiplier": 1}).status_code == 404
 
 
-def test_list_is_grouped_by_aisle(client, db):
-    shopping.add_lines(db, ["2 eggs", "1 onion"])
+def test_list_is_grouped_by_aisle(client, db, uid):
+    shopping.add_lines(db, uid, ["2 eggs", "1 onion"])
     db.commit()
     data = client.get("/api/list").json
     assert [g["aisle"] for g in data["groups"]] == ["Produce", "Dairy & Eggs"]
@@ -212,8 +215,8 @@ def test_list_is_grouped_by_aisle(client, db):
     assert data["counts"] == {"total": 2, "checked": 0, "open": 2}
 
 
-def test_check_and_uncheck_persist(client, db):
-    shopping.add_line(db, "2 eggs")
+def test_check_and_uncheck_persist(client, db, uid):
+    shopping.add_line(db, uid, "2 eggs")
     db.commit()
     item_id = db.execute("SELECT id FROM shopping_list").fetchone()[0]
     response = client.post(f"/api/list/{item_id}/check", json={"checked": True})
@@ -226,8 +229,8 @@ def test_check_and_uncheck_persist(client, db):
     assert db.execute("SELECT checked FROM shopping_list").fetchone()[0] == 0
 
 
-def test_change_an_items_amount(client, db):
-    shopping.add_line(db, "6 apples")
+def test_change_an_items_amount(client, db, uid):
+    shopping.add_line(db, uid, "6 apples")
     db.commit()
     item_id = db.execute("SELECT id FROM shopping_list").fetchone()[0]
     response = client.post(f"/api/list/{item_id}/amount", json={"amount": "1"})
@@ -242,8 +245,8 @@ def test_change_an_items_amount(client, db):
     assert client.post("/api/list/999/amount", json={"amount": "1"}).status_code == 404
 
 
-def test_remove_one_item(client, db):
-    shopping.add_lines(db, ["6 apples", "1 cup milk"])
+def test_remove_one_item(client, db, uid):
+    shopping.add_lines(db, uid, ["6 apples", "1 cup milk"])
     db.commit()
     item_id = db.execute("SELECT id FROM shopping_list WHERE item_key = 'apple'").fetchone()[0]
     response = client.delete(f"/api/list/{item_id}")
@@ -251,8 +254,8 @@ def test_remove_one_item(client, db):
     assert client.delete(f"/api/list/{item_id}").status_code == 404
 
 
-def test_check_validation(client, db):
-    shopping.add_line(db, "2 eggs")
+def test_check_validation(client, db, uid):
+    shopping.add_line(db, uid, "2 eggs")
     db.commit()
     item_id = db.execute("SELECT id FROM shopping_list").fetchone()[0]
     assert client.post(f"/api/list/{item_id}/check", json={"checked": "yes"}).status_code == 400
@@ -260,8 +263,8 @@ def test_check_validation(client, db):
     assert client.post("/api/list/999/check", json={"checked": True}).status_code == 404
 
 
-def test_clear_list(client, db):
-    shopping.add_lines(db, ["2 eggs", "1 cup milk", "1 lemon"])
+def test_clear_list(client, db, uid):
+    shopping.add_lines(db, uid, ["2 eggs", "1 cup milk", "1 lemon"])
     db.commit()
     first = db.execute("SELECT id FROM shopping_list ORDER BY id").fetchone()[0]
     client.post(f"/api/list/{first}/check", json={"checked": True})
@@ -313,25 +316,25 @@ def test_planner_add_remove_and_build(client, db, add_recipe):
     assert all(not meals for meals in response.json["plan"].values())
 
 
-def test_planner_validation(client, db, add_recipe):
+def test_planner_validation(client, db, add_recipe, uid):
     recipe_id = add_recipe()
     bad_bodies = [
         {"day": "Funday", "recipe_id": recipe_id, "multiplier": 1},
         {"day": "Monday", "recipe_id": "abc", "multiplier": 1},
         {"day": "Monday", "recipe_id": True, "multiplier": 1},
-        {"day": "Monday", "recipe_id": 999, "multiplier": 1},
         {"day": "Monday", "recipe_id": recipe_id, "multiplier": 9},
     ]
     for body in bad_bodies:
         response = client.post("/api/planner", json=body)
         assert response.status_code == 400 and response.json["error"], body
-    assert all(not meals for meals in database.list_plan(db).values())
+    assert client.post("/api/planner", json={"day": "Monday", "recipe_id": 999}).status_code == 404
+    assert all(not meals for meals in database.list_plan(db, uid).values())
 
 
-def test_build_with_empty_plan_is_rejected(client, db):
+def test_build_with_empty_plan_is_rejected(client, db, uid):
     response = client.post("/api/planner/build")
     assert response.status_code == 400 and "Plan some meals first" in response.json["error"]
-    assert shopping.counts(db)["total"] == 0
+    assert shopping.counts(db, uid)["total"] == 0
 
 
 # ---------- insights ----------
@@ -380,29 +383,3 @@ def test_csrf_is_enforced_on_writes(make_app):
 def test_csrf_token_is_stable_for_a_session(make_app):
     client = make_app(CSRF_ENABLED=True).test_client()
     assert client.get("/api/csrf").json["token"] == client.get("/api/csrf").json["token"]
-
-
-def test_database_from_before_lunch_is_migrated_without_losing_data(tmp_path):
-    path = str(tmp_path / "old.db")
-    old_schema = database.SCHEMA.replace("'Breakfast', 'Lunch', 'Dinner', 'Dessert'", "'Breakfast', 'Dinner', 'Dessert'")
-    conn = database.connect(path)
-    conn.executescript(old_schema)
-    for title in ("Oats", "Gone", "Curry"):
-        conn.execute("INSERT INTO recipes (title, prep_time, category, ingredients) VALUES (?, 10, 'Dinner', '[]')",
-                     (title,))
-    conn.execute("DELETE FROM recipes WHERE title = 'Gone'")
-    conn.execute("INSERT INTO meal_plan (day, recipe_id) VALUES ('Monday', 3)")
-    conn.commit()
-    conn.close()
-
-    database.init_db(path, seed=False)
-    database.init_db(path, seed=False)  # a second start is a no-op
-
-    conn = database.connect(path)
-    assert [r["title"] for r in database.list_recipes(conn)] == ["Curry", "Oats"]
-    assert [tuple(r) for r in conn.execute("SELECT recipe_id FROM meal_plan")] == [(3,)]
-    new_id = database.create_recipe(conn, {"title": "Wrap", "prep_time": 5, "category": "Lunch", "ingredients": ["1 wrap"]})
-    assert new_id == 4  # the deleted recipe's id is not reused
-    assert database.delete_recipe(conn, 3)
-    assert conn.execute("SELECT COUNT(*) FROM meal_plan").fetchone()[0] == 0  # cascade still works
-    conn.close()

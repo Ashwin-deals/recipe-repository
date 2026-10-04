@@ -12,7 +12,7 @@ from google.genai import errors
 
 import database
 import gcp
-from conftest import API_KEY_CONFIG, FAKE_API_KEY
+from conftest import user_id, API_KEY_CONFIG, FAKE_API_KEY
 
 
 class FakeChatModel:
@@ -48,9 +48,10 @@ def ai_client(ai_app):
 
 
 @pytest.fixture
-def recipe_id(ai_app):
+def recipe_id(ai_app, ai_client):
     conn = database.connect(ai_app.config["DATABASE_PATH"])
-    rid = database.create_recipe(conn, {"title": "Butter Chicken", "prep_time": 40, "category": "Dinner",
+    uid = user_id(conn)
+    rid = database.create_recipe(conn, uid, {"title": "Butter Chicken", "prep_time": 40, "category": "Dinner",
                                         "ingredients": ["500 g chicken", "3 tbsp butter", "1 cup cream"]})
     conn.commit()
     conn.close()
@@ -286,7 +287,7 @@ def test_api_key_and_messages_never_leak(make_app, monkeypatch, caplog):
 
 def test_update_recipe(ai_app, ai_client, recipe_id):
     conn = database.connect(ai_app.config["DATABASE_PATH"])
-    database.save_nutrition(conn, recipe_id, {"calories": 500, "estimate": True}, ["gluten-free"])
+    database.save_nutrition(conn, user_id(conn), recipe_id, {"calories": 500, "estimate": True}, ["gluten-free"])
     conn.commit()
     response = ai_client.put(f"/api/recipes/{recipe_id}", json={
         "title": "Vegan Butter Chicken", "prep_time": 35, "category": "Dinner",

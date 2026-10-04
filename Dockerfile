@@ -17,13 +17,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PORT=8080 \
+    APP_ENV=production \
     TRUST_PROXY_HOPS=1
 WORKDIR /app
 
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
 
-COPY app.py database.py gcp.py ingredients.py shopping.py ./
+COPY app.py auth.py database.py gcp.py ingredients.py shopping.py ./
 COPY --from=frontend /build/dist ./frontend/dist
 
 RUN useradd --create-home --uid 10001 cartchef \

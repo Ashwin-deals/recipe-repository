@@ -1,4 +1,7 @@
-"""Shopping list: add lines with smart merging, check items, clear, and group by aisle."""
+"""Shopping list: add lines with smart merging, check items, clear, and group by aisle.
+
+Every function works on one user's list: rows are always filtered by ``user_id``.
+"""
 from __future__ import annotations
 
 import json
@@ -26,7 +29,8 @@ def _find_target(rows, qty: Fraction | None, unit: str | None):
     return next((row for row in rows if row["qty"] is None), None)
 
 
-def add_line(conn: sqlite3.Connection, line: str, *, multiplier: int = 1, source: str | None = None) -> str | None:
+def add_line(conn: sqlite3.Connection, user_id: int, line: str, *, multiplier: int = 1,
+             source: str | None = None) -> str | None:
     """Add one ingredient line. Returns 'added', 'merged', or None if the line was empty."""
     parsed = ing.parse_line(line)
     key = ing.merge_key(parsed.text)
@@ -37,15 +41,15 @@ def add_line(conn: sqlite3.Connection, line: str, *, multiplier: int = 1, source
         qty, unit = ing.normalize(qty * multiplier, unit, compound=True)
 
     rows = conn.execute(
-        "SELECT * FROM shopping_list WHERE item_key = ? AND checked = 0 ORDER BY id", (key,)
+        "SELECT * FROM shopping_list WHERE user_id = ? AND item_key = ? AND checked = 0 ORDER BY id", (user_id, key)
     ).fetchall()
     target = _find_target(rows, qty, unit)
 
     if target is None:
         conn.execute(
-            """INSERT INTO shopping_list (item_key, name, unit, qty, aisle, sources)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (key, ing.clean_name(parsed.text), unit, str(qty) if qty is not None else None,
+            """INSERT INTO shopping_list (user_id, item_key, name, unit, qty, aisle, sources)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (user_id, key, ing.clean_name(parsed.text), unit, str(qty) if qty is not None else None,
              ing.aisle_for(key, unit), json.dumps([source] if source else [])),
         )
         return "added"
@@ -61,43 +65,52 @@ def add_line(conn: sqlite3.Connection, line: str, *, multiplier: int = 1, source
     if source and source not in sources and len(sources) < MAX_SOURCES:
         sources.append(source)
     conn.execute(
-        "UPDATE shopping_list SET qty = ?, unit = ?, sources = ? WHERE id = ?",
-        (str(new_qty) if new_qty is not None else None, new_unit, json.dumps(sources), target["id"]),
+        "UPDATE shopping_list SET qty = ?, unit = ?, sources = ? WHERE id = ? AND user_id = ?",
+        (str(new_qty) if new_qty is not None else None, new_unit, json.dumps(sources), target["id"], user_id),
     )
     return "merged"
 
 
-def add_lines(conn: sqlite3.Connection, lines: list[str], *, multiplier: int = 1,
+def add_lines(conn: sqlite3.Connection, user_id: int, lines: list[str], *, multiplier: int = 1,
               source: str | None = None, recipe_id: int | None = None) -> dict:
     stats = {"added": 0, "merged": 0}
     for line in lines:
-        outcome = add_line(conn, line, multiplier=multiplier, source=source)
+        outcome = add_line(conn, user_id, line, multiplier=multiplier, source=source)
         if outcome:
             stats[outcome] += 1
-            database.log_event(conn, "ingredient_added", {
+            database.log_event(conn, user_id, "ingredient_added", {
                 "line": line, "item_key": ing.merge_key(ing.parse_line(line).text),
                 "recipe_id": recipe_id, "multiplier": multiplier, "merged": outcome == "merged",
             })
     return stats
 
 
-def add_recipe(conn: sqlite3.Connection, recipe: dict, multiplier: int, *, via: str = "dashboard") -> dict:
-    stats = add_lines(conn, recipe["lines"], multiplier=multiplier, source=recipe["title"],
+def add_recipe(conn: sqlite3.Connection, user_id: int, recipe: dict, multiplier: int, *,
+               via: str = "dashboard") -> dict:
+    """Add a recipe the caller already loaded for this user (see database.get_recipe)."""
+    stats = add_lines(conn, user_id, recipe["lines"], multiplier=multiplier, source=recipe["title"],
                       recipe_id=recipe["id"])
-    database.log_event(conn, "list_added", {
+    database.log_event(conn, user_id, "list_added", {
         "recipe_id": recipe["id"], "title": recipe["title"], "category": recipe["category"],
         "multiplier": multiplier, "via": via, **stats,
     })
     return stats
 
 
-def set_checked(conn: sqlite3.Connection, item_id: int, checked: bool) -> dict | None:
-    row = conn.execute("SELECT * FROM shopping_list WHERE id = ?", (item_id,)).fetchone()
+def _own_row(conn: sqlite3.Connection, user_id: int, item_id: int) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM shopping_list WHERE id = ? AND user_id = ?", (item_id, user_id)
+    ).fetchone()
+
+
+def set_checked(conn: sqlite3.Connection, user_id: int, item_id: int, checked: bool) -> dict | None:
+    row = _own_row(conn, user_id, item_id)
     if row is None:
         return None
     if bool(row["checked"]) != checked:
-        conn.execute("UPDATE shopping_list SET checked = ? WHERE id = ?", (int(checked), item_id))
-        database.log_event(conn, "item_checked", {
+        conn.execute("UPDATE shopping_list SET checked = ? WHERE id = ? AND user_id = ?",
+                     (int(checked), item_id, user_id))
+        database.log_event(conn, user_id, "item_checked", {
             "item_id": item_id, "item_key": row["item_key"], "name": row["name"], "checked": checked,
         })
     return {"id": item_id, "checked": checked}
@@ -107,12 +120,12 @@ class AmountError(ValueError):
     """The text typed as a new amount isn't one ("lots", "0", "2 cups sugar" on the flour line)."""
 
 
-def set_amount(conn: sqlite3.Connection, item_id: int, amount: str) -> dict | None:
+def set_amount(conn: sqlite3.Connection, user_id: int, item_id: int, amount: str) -> dict | None:
     """Replace an item's amount with what the user typed: "1", "2 cups", "1 apple" or "" for none.
 
     Returns the updated item, or None if it no longer exists. Raises AmountError for bad input.
     """
-    row = conn.execute("SELECT * FROM shopping_list WHERE id = ?", (item_id,)).fetchone()
+    row = _own_row(conn, user_id, item_id)
     if row is None:
         return None
     text = ing.normalize_line(amount)
@@ -124,30 +137,30 @@ def set_amount(conn: sqlite3.Connection, item_id: int, amount: str) -> dict | No
             raise AmountError(f"Type an amount like 1, 2 cups or 1/2 tsp for {row['name']}.")
         qty, unit = ing.normalize(parsed.shopping_qty, parsed.unit, compound=True)
     conn.execute(
-        "UPDATE shopping_list SET qty = ?, unit = ?, aisle = ? WHERE id = ?",
-        (str(qty) if qty is not None else None, unit, ing.aisle_for(row["item_key"], unit), item_id),
+        "UPDATE shopping_list SET qty = ?, unit = ?, aisle = ? WHERE id = ? AND user_id = ?",
+        (str(qty) if qty is not None else None, unit, ing.aisle_for(row["item_key"], unit), item_id, user_id),
     )
-    database.log_event(conn, "item_amount_changed", {
+    database.log_event(conn, user_id, "item_amount_changed", {
         "item_id": item_id, "item_key": row["item_key"], "qty": str(qty) if qty is not None else None, "unit": unit,
     })
-    return _view(conn.execute("SELECT * FROM shopping_list WHERE id = ?", (item_id,)).fetchone())
+    return _view(_own_row(conn, user_id, item_id))
 
 
-def remove(conn: sqlite3.Connection, item_id: int) -> bool:
-    row = conn.execute("SELECT item_key FROM shopping_list WHERE id = ?", (item_id,)).fetchone()
+def remove(conn: sqlite3.Connection, user_id: int, item_id: int) -> bool:
+    row = _own_row(conn, user_id, item_id)
     if row is None:
         return False
-    conn.execute("DELETE FROM shopping_list WHERE id = ?", (item_id,))
-    database.log_event(conn, "item_removed", {"item_id": item_id, "item_key": row["item_key"]})
+    conn.execute("DELETE FROM shopping_list WHERE id = ? AND user_id = ?", (item_id, user_id))
+    database.log_event(conn, user_id, "item_removed", {"item_id": item_id, "item_key": row["item_key"]})
     return True
 
 
-def clear(conn: sqlite3.Connection, *, only_checked: bool = False) -> int:
+def clear(conn: sqlite3.Connection, user_id: int, *, only_checked: bool = False) -> int:
     if only_checked:
-        removed = conn.execute("DELETE FROM shopping_list WHERE checked = 1").rowcount
+        removed = conn.execute("DELETE FROM shopping_list WHERE user_id = ? AND checked = 1", (user_id,)).rowcount
     else:
-        removed = conn.execute("DELETE FROM shopping_list").rowcount
-    database.log_event(conn, "list_cleared", {"scope": "checked" if only_checked else "all", "removed": removed})
+        removed = conn.execute("DELETE FROM shopping_list WHERE user_id = ?", (user_id,)).rowcount
+    database.log_event(conn, user_id, "list_cleared", {"scope": "checked" if only_checked else "all", "removed": removed})
     return removed
 
 
@@ -166,9 +179,11 @@ def _view(row: sqlite3.Row) -> dict:
     }
 
 
-def grouped_items(conn: sqlite3.Connection) -> list[dict]:
-    """Items grouped by aisle in store order; unchecked items first within each aisle."""
-    rows = conn.execute("SELECT * FROM shopping_list ORDER BY checked, name, id").fetchall()
+def grouped_items(conn: sqlite3.Connection, user_id: int) -> list[dict]:
+    """The user's items grouped by aisle in store order; unchecked items first within each aisle."""
+    rows = conn.execute(
+        "SELECT * FROM shopping_list WHERE user_id = ? ORDER BY checked, name, id", (user_id,)
+    ).fetchall()
     groups: dict[str, list[dict]] = {}
     for row in rows:
         groups.setdefault(row["aisle"], []).append(_view(row))
@@ -178,8 +193,9 @@ def grouped_items(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
-def counts(conn: sqlite3.Connection) -> dict:
+def counts(conn: sqlite3.Connection, user_id: int) -> dict:
     row = conn.execute(
-        "SELECT COUNT(*) AS total, COALESCE(SUM(checked), 0) AS checked FROM shopping_list"
+        "SELECT COUNT(*) AS total, COALESCE(SUM(checked), 0) AS checked FROM shopping_list WHERE user_id = ?",
+        (user_id,),
     ).fetchone()
     return {"total": row["total"], "checked": row["checked"], "open": row["total"] - row["checked"]}

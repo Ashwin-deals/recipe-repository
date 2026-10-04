@@ -14,14 +14,14 @@ def ai_client(make_app):
 
 # ---------- fallbacks when Gemini is off ----------
 
-def test_nutrition_fallback_gives_keyword_tags(client, db, add_recipe):
+def test_nutrition_fallback_gives_keyword_tags(client, db, add_recipe, uid):
     recipe_id = add_recipe(lines=["1 cup rice", "1/2 cup cashews"])
     response = client.post(f"/api/recipes/{recipe_id}/nutrition")
     assert response.status_code == 200
     assert response.json["source"] == "basic" and response.json["nutrition"] is None
     assert response.json["diet_tags"] == ["vegetarian", "vegan", "gluten-free", "dairy-free", "contains nuts"]
     assert "keyword" in response.json["message"]
-    assert database.get_recipe(db, recipe_id)["nutrition"] is None
+    assert database.get_recipe(db, uid, recipe_id)["nutrition"] is None
 
 
 def test_substitute_fallback_uses_builtin_list(client):
@@ -44,11 +44,11 @@ def test_substitute_rejects_bad_recipe_id(client):
 # ---------- with Gemini (faked) ----------
 
 
-def test_ai_nutrition_is_saved_and_bounded(make_app, gemini):
+def test_ai_nutrition_is_saved_and_bounded(make_app, gemini, uid):
     app = make_app(**AI_CONFIG)
     client = app.test_client()
     conn = database.connect(app.config["DATABASE_PATH"])
-    recipe_id = database.create_recipe(conn, {"title": "Curry", "prep_time": 30, "category": "Dinner",
+    recipe_id = database.create_recipe(conn, uid, {"title": "Curry", "prep_time": 30, "category": "Dinner",
                                               "ingredients": ["500 g chicken", "1 cup rice"]})
     conn.commit()
     gemini.answers.append({"servings": 4, "calories": 512.4, "protein_g": 38, "carbs_g": "45", "fat_g": -3,
@@ -58,7 +58,7 @@ def test_ai_nutrition_is_saved_and_bounded(make_app, gemini):
     assert response.json["nutrition"] == {"calories": 512, "estimate": True, "servings": 4,
                                           "protein_g": 38, "carbs_g": 45, "fat_g": None}
     assert response.json["diet_tags"] == ["gluten-free", "dairy-free"]
-    saved = database.get_recipe(conn, recipe_id)
+    saved = database.get_recipe(conn, uid, recipe_id)
     assert saved["nutrition"]["calories"] == 512 and saved["diet_tags"] == ["gluten-free", "dairy-free"]
     assert client.get(f"/api/recipes/{recipe_id}").json["recipe"]["nutrition"]["estimate"] is True
     conn.close()
@@ -89,11 +89,11 @@ def test_ai_substitutes_failure_falls_back(ai_client, gemini):
 # ---------- guardrails ----------
 
 
-def test_nutrition_falls_back_when_daily_cap_is_reached(make_app, gemini, add_recipe):
+def test_nutrition_falls_back_when_daily_cap_is_reached(make_app, gemini, add_recipe, uid):
     app = make_app(**AI_CONFIG, AI_DAILY_CAP=1)
     client = app.test_client()
     conn = database.connect(app.config["DATABASE_PATH"])
-    recipe_id = database.create_recipe(conn, {"title": "Rice", "prep_time": 5, "category": "Dinner", "ingredients": ["1 cup rice"]})
+    recipe_id = database.create_recipe(conn, uid, {"title": "Rice", "prep_time": 5, "category": "Dinner", "ingredients": ["1 cup rice"]})
     conn.commit()
     gemini.answers.append({"calories": 200, "diet_tags": ["vegan"]})
     assert client.post(f"/api/recipes/{recipe_id}/nutrition").json["source"] == "ai"

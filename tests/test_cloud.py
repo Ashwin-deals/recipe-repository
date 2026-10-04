@@ -4,8 +4,10 @@ import threading
 
 import pytest
 
+import auth
 import database
 import gcp
+from app import analytics_rows
 
 
 class FakeBlob:
@@ -49,8 +51,10 @@ def test_backup_runs_after_writes_only(make_app, monkeypatch):
     bucket = FakeBucket()
     monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
     client = make_app(GCS_BUCKET="test-bucket").test_client()
+    gcp.flush_backup()  # the sign-up
 
     client.get("/")
+    client.get("/api/list")
     assert gcp.flush_backup() is False
     client.post("/api/list/items", json={"line": "2 lemons"})
     assert gcp.flush_backup() is True
@@ -139,14 +143,18 @@ def test_scheduled_backup_runs_on_its_own(make_app, monkeypatch):
 
 def test_restore_at_startup(make_app, monkeypatch, tmp_path):
     source = tmp_path / "source.db"
-    database.init_db(str(source), seed=True)
+    database.init_db(str(source))
+    conn = database.connect(str(source))
+    uid = auth.create_user(conn, "restored@example.com", "!", "Restored")
+    conn.commit()
+    conn.close()
     bucket = FakeBucket()
     bucket.store["cartchef.db"] = source.read_bytes()
     monkeypatch.setattr(gcp, "_bucket", lambda config: bucket)
 
     app = make_app(GCS_BUCKET="test-bucket", DATABASE_PATH=str(tmp_path / "fresh" / "app.db"))
     conn = database.connect(app.config["DATABASE_PATH"])
-    assert len(database.list_recipes(conn)) == 6
+    assert len(database.list_recipes(conn, uid)) == 6
     conn.close()
 
 
@@ -177,14 +185,14 @@ def test_committed_events_are_mirrored(make_app, monkeypatch):
     assert '"line": "2 lemons"' in mirrored[0]["payload"]
 
 
-def test_rolled_back_events_are_not_mirrored(db):
+def test_rolled_back_events_are_not_mirrored(db, uid):
     mirrored = []
     db.on_commit = mirrored.extend
-    database.log_event(db, "list_cleared", {"removed": 1})
+    database.log_event(db, uid, "list_cleared", {"removed": 1})
     db.rollback()
     db.commit()
     assert mirrored == []
-    database.log_event(db, "list_cleared", {"removed": 2})
+    database.log_event(db, uid, "list_cleared", {"removed": 2})
     db.commit()
     assert [e["type"] for e in mirrored] == ["list_cleared"]
 
@@ -219,14 +227,15 @@ def test_bigquery_failure_is_logged_not_raised(monkeypatch, caplog):
 
 
 def test_proxy_fix_lets_rate_limits_see_the_real_client(make_app):
-    client = make_app(TRUST_PROXY_HOPS=1, AI_RATE_LIMIT="1/minute").test_client()
+    client = make_app(TRUST_PROXY_HOPS=1, LOGIN_RATE_LIMIT="1/minute").test_client(email=None)
 
     def call(ip):
-        return client.post("/api/substitute", json={"ingredient": "egg"}, headers={"X-Forwarded-For": ip}).status_code
+        body = {"email": "nobody@example.com", "password": "wrong password"}
+        return client.post("/api/auth/login", json=body, headers={"X-Forwarded-For": ip}).status_code
 
-    assert call("203.0.113.1") == 200
+    assert call("203.0.113.1") == 401
     assert call("203.0.113.1") == 429
-    assert call("203.0.113.2") == 200
+    assert call("203.0.113.2") == 401
 
 
 def test_forwarded_header_ignored_without_proxy_setting(make_app):
@@ -345,11 +354,11 @@ def test_no_permission_to_check_the_table_still_inserts(fake_bq, caplog):
     assert "permission denied" in caplog.text and fake.created == [] and len(fake.inserted) == 1
 
 
-def test_schema_json_matches_the_rows_the_app_sends(app):
+def test_schema_json_matches_the_rows_the_app_sends(app, uid):
     schema = gcp.events_schema_json()
     assert [f["name"] for f in schema] == ["type", "payload", "created_at"]
     conn = database.connect(app.config["DATABASE_PATH"])
-    database.log_event(conn, "item_checked", {"item_id": 1})
-    (row,) = conn.pending_events
+    database.log_event(conn, uid, "item_checked", {"item_id": 1})
+    (row,) = analytics_rows(app.config["SECRET_KEY"], conn.pending_events)
     conn.close()
     assert set(row) == {f["name"] for f in schema} and all(row[f["name"]] is not None for f in schema)
