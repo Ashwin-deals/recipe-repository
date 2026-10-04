@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useContext, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { CategoryFilter } from "../components/CategoryFilter";
 import { Icon } from "../components/Icon";
@@ -7,6 +7,8 @@ import { RecipeCard } from "../components/RecipeCard";
 import { RecipeForm } from "../components/RecipeForm";
 import { ShoppingList } from "../components/ShoppingList";
 import { EmptyState, ErrorState, LoadingState } from "../components/States";
+import { Welcome } from "../components/Welcome";
+import { AuthContext } from "../hooks/useAuth";
 import { usePageTitle } from "../hooks/usePageTitle";
 import { useRecipeChanges, useRecipeLibrary } from "../hooks/useRecipeLibrary";
 import { useRecipes } from "../hooks/useRecipes";
@@ -30,6 +32,7 @@ export function Dashboard() {
   const recipes = useRecipes(category);
   const [showForm, setShowForm] = useState(false);
   const { data, setData, reload } = recipes;
+  const auth = useContext(AuthContext);
 
   // The unfiltered list is every recipe: share it with search so it doesn't fetch them again.
   useEffect(() => {
@@ -68,6 +71,16 @@ export function Dashboard() {
         <PageHeader eyebrow="No. 01 · Recipe box" title="What's cooking this week?" id="recipes-heading">
           {!showForm && newRecipeButton("New recipe")}
         </PageHeader>
+
+        {auth?.isNewAccount && !showForm && (
+          <Welcome
+            recipeCount={data?.length ?? 0}
+            onSnap={() => {
+              auth.dismissWelcome();
+              setShowForm(true);
+            }}
+          />
+        )}
 
         {showForm && (
           <RecipeForm

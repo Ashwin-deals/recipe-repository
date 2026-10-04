@@ -20,7 +20,7 @@ const result = async (name: RegExp) => within(await screen.findByRole("listbox",
 describe("Header search", () => {
   it("focuses with / unless you are typing somewhere else", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await screen.findByRole("button", { name: "Pancakes" });
     await userEvent.keyboard("/");
     expect(searchBox()).toHaveFocus();
@@ -35,7 +35,7 @@ describe("Header search", () => {
 
   it("shows grouped, highlighted results for recipes and list items", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.type(searchBox(), "chicken");
     const results = await screen.findByRole("listbox", { name: "Search results" });
     expect(searchBox()).toHaveAttribute("aria-expanded", "true");
@@ -52,7 +52,7 @@ describe("Header search", () => {
 
   it("matches ingredients, categories and diet tags", async () => {
     mockApi(routes);
-    renderApp("/planner");
+    await renderApp("/planner");
     await userEvent.type(searchBox(), "buttermilk");
     const option = await result(/Pancakes/);
     expect(option).toHaveTextContent("Ingredient · 1 cup buttermilk");
@@ -69,7 +69,7 @@ describe("Header search", () => {
 
   it("moves through results with the arrow keys and opens a recipe's drawer with Enter", async () => {
     mockApi(routes);
-    renderApp("/planner");
+    await renderApp("/planner");
     await userEvent.type(searchBox(), "chicken");
     await result(/Chicken Curry/);
 
@@ -89,7 +89,7 @@ describe("Header search", () => {
 
   it("goes to the list when a list item is chosen", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.type(searchBox(), "thighs");
     await userEvent.click(await result(/chicken thighs/));
     expect(location()).toBe("/shopping");
@@ -97,7 +97,7 @@ describe("Header search", () => {
 
   it("filters the recipe grid live and keeps the query in the URL", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await screen.findByRole("button", { name: "Pancakes" });
     await userEvent.type(searchBox(), "curry");
     await vi.waitFor(() => expect(location()).toBe("/?q=curry"));
@@ -113,7 +113,7 @@ describe("Header search", () => {
 
   it("reads the query from the URL on load", async () => {
     mockApi(routes);
-    renderApp("/?q=cookies");
+    await renderApp("/?q=cookies");
     expect(searchBox()).toHaveValue("cookies");
     expect(await screen.findByRole("button", { name: "Egg-free Cookies" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
@@ -121,7 +121,7 @@ describe("Header search", () => {
 
   it("clears with the x button and with Escape", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.type(searchBox(), "curry");
     await screen.findByRole("listbox");
     await userEvent.click(header().getByRole("button", { name: "Clear search" }));
@@ -139,7 +139,7 @@ describe("Header search", () => {
 
   it("offers Ask the chef when nothing matches", async () => {
     mockApi(routes);
-    renderApp("/planner");
+    await renderApp("/planner");
     await userEvent.type(searchBox(), "eggs and tomatoes");
     expect(await screen.findByText("No matches.", { selector: ".search-empty" })).toBeInTheDocument();
     await userEvent.keyboard("{ArrowDown}{Enter}");
@@ -151,7 +151,7 @@ describe("Header search", () => {
   it("shows a loading state until recipes arrive", async () => {
     let release: () => void = () => undefined;
     mockApi({ ...routes, "GET /api/recipes": () => new Promise((resolve) => { release = () => resolve({ recipes: [curry] }); }) });
-    renderApp("/planner");
+    await renderApp("/planner");
     await userEvent.type(searchBox(), "curry");
     expect(await screen.findByText("Searching recipes…")).toBeInTheDocument();
     release();

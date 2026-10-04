@@ -27,6 +27,17 @@ interface RequestOptions {
 }
 
 let csrfToken: string | null = null;
+let unauthorizedHandler: (() => void) | null = null;
+
+/** Called when any data request comes back 401 (the session ended): the auth layer signs out locally. */
+export function onUnauthorized(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+/** Sign in, sign up and sign out return the token for the new session. */
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -70,13 +81,17 @@ async function request<T>(path: string, options: RequestOptions = {}, retried = 
     throw new ApiError("You're offline. Check your connection and try again.", 0);
   }
 
-  // 403 means the session (and its CSRF token) expired: fetch a fresh token and retry once.
-  if (response.status === 403 && method !== "GET" && !retried) {
+  const data: unknown = await response.json().catch(() => null);
+  // A CSRF rejection means the token is stale (e.g. the session changed): fetch a fresh one and retry once.
+  if (response.status === 403 && isRecord(data) && data.code === "csrf" && !retried) {
     csrfToken = null;
     return request<T>(path, options, true);
   }
-
-  const data: unknown = await response.json().catch(() => null);
+  // Auth endpoints report their own 401s (a wrong password is not an expired session).
+  if (response.status === 401 && !path.startsWith("/api/auth/")) {
+    csrfToken = null;
+    unauthorizedHandler?.();
+  }
   if (!response.ok) throw errorFrom(data, response.status);
   // The backend is the source of truth for these shapes (see types/index.ts).
   return data as T;
@@ -87,7 +102,7 @@ export const api = {
   post: <T>(path: string, json: unknown = {}) => request<T>(path, { method: "POST", json }),
   put: <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json }),
   postForm: <T>(path: string, form: FormData) => request<T>(path, { method: "POST", form }),
-  delete: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  delete: <T>(path: string, json?: unknown) => request<T>(path, { method: "DELETE", json }),
 };
 
 /** Test helper: forget the cached CSRF token between tests. */

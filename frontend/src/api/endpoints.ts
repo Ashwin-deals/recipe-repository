@@ -1,11 +1,31 @@
 import type {
-  AddResult, AppConfig, BuildResult, Category, ChatResult, ChatTurn, Counts, ImportResult, InsightsData, ListData,
+  AddResult, AppConfig, AuthResult, User, BuildResult, Category, ChatResult, ChatTurn, Counts, ImportResult, InsightsData, ListData,
   ListItem,
   NutritionResult, PlanData, Recipe, ScaledLines, SubstituteResult,
 } from "../types";
 import { api } from "./client";
 
 export const getConfig = () => api.get<AppConfig>("/api/config");
+
+export const getMe = () => api.get<{ user: User | null; csrf_token: string }>("/api/auth/me");
+
+export interface Credentials {
+  email: string;
+  password: string;
+  remember: boolean;
+  display_name?: string;
+}
+
+export const signIn = (credentials: Credentials) => api.post<AuthResult>("/api/auth/login", credentials);
+
+export const signUp = (credentials: Credentials) => api.post<AuthResult>("/api/auth/signup", credentials);
+
+export const signInDemo = () => api.post<AuthResult>("/api/auth/demo");
+
+export const signOut = () => api.post<{ signed_out: true; csrf_token: string }>("/api/auth/logout");
+
+export const deleteAccount = (password: string) =>
+  api.delete<{ deleted: true; csrf_token: string }>("/api/auth/account", { password });
 
 export const getRecipes = (category: Category | null) =>
   api.get<{ recipes: Recipe[] }>(category ? `/api/recipes?category=${encodeURIComponent(category)}` : "/api/recipes");

@@ -9,6 +9,12 @@ class MockReply {
 
 export const reply = (status: number, body: unknown) => new MockReply(status, body);
 
+/** Who /api/auth/me says is signed in, unless a test mocks it. */
+export const TEST_USER = {
+  id: 1, email: "cook@example.com", display_name: "Test Cook", initials: "TC", is_demo: false,
+  created_at: "2026-10-01 09:00:00",
+};
+
 export function networkDown(): never {
   throw new TypeError("Failed to fetch");
 }
@@ -24,7 +30,7 @@ const json = (body: unknown, status = 200) =>
 
 /**
  * Stub global fetch. Routes are keyed "METHOD /path?query" (exact) or "METHOD /path".
- * /api/csrf and /api/config answer by default.
+ * /api/csrf, /api/config and /api/auth/me (signed in as TEST_USER) answer by default.
  */
 export function mockApi(routes: Record<string, Handler | object>) {
   const calls: Call[] = [];
@@ -38,7 +44,8 @@ export function mockApi(routes: Record<string, Handler | object>) {
       routes[`${method} ${url.pathname}${url.search}`] ??
       routes[`${method} ${url.pathname}`] ??
       (url.pathname === "/api/csrf" ? { token: "test-token" } : undefined) ??
-      (url.pathname === "/api/config" ? { ai_enabled: false, categories: ["Breakfast", "Lunch", "Dinner", "Dessert"],
+      (url.pathname === "/api/auth/me" ? { user: TEST_USER, csrf_token: "test-token" } : undefined) ??
+      (url.pathname === "/api/config" ? { allow_signups: true, demo_login: false, ai_enabled: false, categories: ["Breakfast", "Lunch", "Dinner", "Dessert"],
         days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
         multipliers: [1, 2, 3, 4], max_image_bytes: 5242880 } : undefined);
     if (handler === undefined) return json({ error: `No mock for ${method} ${url.pathname}` }, 404);

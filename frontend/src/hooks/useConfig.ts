@@ -3,6 +3,8 @@ import type { AppConfig } from "../types";
 
 // Used until /api/config answers (and offline), so the UI never waits on it.
 export const DEFAULT_CONFIG: AppConfig = {
+  allow_signups: true,
+  demo_login: false,
   ai_enabled: false,
   categories: ["Breakfast", "Lunch", "Dinner", "Dessert"],
   days: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],

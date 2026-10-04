@@ -23,7 +23,7 @@ const chat = () => screen.queryByRole("dialog", { name: "Ask the chef" });
 describe("Ask the chef widget", () => {
   it("opens from the launcher, focuses the input, and closes with the launcher", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     expect(launcher()).toHaveAttribute("aria-expanded", "false");
     expect(chat()).not.toBeInTheDocument();
 
@@ -41,7 +41,7 @@ describe("Ask the chef widget", () => {
 
   it("closes on Escape and with Minimize, returning focus to the launcher", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.click(launcher());
     await screen.findByRole("dialog", { name: "Ask the chef" });
     await userEvent.keyboard("{Escape}");
@@ -56,7 +56,7 @@ describe("Ask the chef widget", () => {
 
   it("keeps the conversation across pages", async () => {
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.click(launcher());
     await userEvent.type(await screen.findByLabelText("Message the chef"), "dairy-free swaps?{Enter}");
     expect(await screen.findByText("Try oat milk.")).toBeInTheDocument();
@@ -70,7 +70,7 @@ describe("Ask the chef widget", () => {
 
   it("opens about a recipe from the drawer's 'Ask about this recipe' link", async () => {
     const api = mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.click(await screen.findByRole("button", { name: "Chicken Curry" }));
     const drawer = screen.getByRole("dialog", { name: "Chicken Curry" });
     await userEvent.click(within(drawer).getByRole("button", { name: "Ask about this recipe" }));
@@ -85,7 +85,7 @@ describe("Ask the chef widget", () => {
 
   it("opens about the recipe from the full recipe page", async () => {
     mockApi(routes);
-    renderApp("/recipes/1");
+    await renderApp("/recipes/1");
     await userEvent.click(await screen.findByRole("button", { name: "Ask about this recipe" }));
     const dialog = await screen.findByRole("dialog", { name: "Ask the chef" });
     expect(within(dialog).getByLabelText("About:")).toHaveDisplayValue("Pancakes");
@@ -94,7 +94,7 @@ describe("Ask the chef widget", () => {
   it("shows an unread dot when the chef answers while the panel is closed", async () => {
     let release: () => void = () => undefined;
     mockApi({ ...routes, "POST /api/chat": () => new Promise((resolve) => { release = () => resolve(reply); }) });
-    renderApp();
+    await renderApp();
     await userEvent.click(launcher());
     await userEvent.type(await screen.findByLabelText("Message the chef"), "hello{Enter}");
     await userEvent.keyboard("{Escape}");
@@ -108,13 +108,13 @@ describe("Ask the chef widget", () => {
 
   it("remembers the conversation and open state for the session", async () => {
     mockApi(routes);
-    const first = renderApp();
+    const first = await renderApp();
     await userEvent.click(launcher());
     await userEvent.type(await screen.findByLabelText("Message the chef"), "hello{Enter}");
     await screen.findByText("Try oat milk.");
     first.unmount();
 
-    renderApp();
+    await renderApp();
     const dialog = await screen.findByRole("dialog", { name: "Ask the chef" });
     expect(within(dialog).getByText("Try oat milk.")).toBeInTheDocument();
     // A restored panel doesn't steal focus on page load.
@@ -124,18 +124,18 @@ describe("Ask the chef widget", () => {
   it("starts fresh if the saved session is unreadable", async () => {
     sessionStorage.setItem("cartchef:chat", "{not json");
     mockApi(routes);
-    renderApp();
+    await renderApp();
     await userEvent.click(launcher());
     const dialog = await screen.findByRole("dialog", { name: "Ask the chef" });
     expect(within(dialog).getByRole("button", { name: "Clear chat" })).toBeDisabled();
   });
 
-  it("shows the label bubble once, on the first visit", () => {
+  it("shows the label bubble once, on the first visit", async () => {
     mockApi(routes);
-    const first = renderApp();
+    const first = await renderApp();
     expect(document.querySelector(".launcher-tip")).toHaveClass("is-shown");
     first.unmount();
-    renderApp();
+    await renderApp();
     expect(document.querySelector(".launcher-tip")).not.toHaveClass("is-shown");
   });
 });

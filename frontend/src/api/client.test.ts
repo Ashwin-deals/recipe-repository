@@ -9,7 +9,7 @@ describe("api client", () => {
       "POST /api/list/clear": () => {
         if (first) {
           first = false;
-          return reply(403, { error: "Your session expired." });
+          return reply(403, { error: "Your session expired.", code: "csrf" });
         }
         return { removed: 0 };
       },

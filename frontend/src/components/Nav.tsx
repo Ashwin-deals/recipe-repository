@@ -3,6 +3,7 @@ import { useShoppingList } from "../hooks/useShoppingList";
 import { GlobalSearch } from "./GlobalSearch";
 import { Icon, type IconName } from "./Icon";
 import { ThemeToggle } from "./ThemeToggle";
+import { UserMenu } from "./UserMenu";
 
 const LINKS: Array<{ to: string; label: string; icon: IconName }> = [
   { to: "/", label: "Recipes", icon: "book" },
@@ -39,6 +40,7 @@ export function Nav() {
         ))}
       </nav>
       <ThemeToggle />
+      <UserMenu />
     </header>
   );
 }

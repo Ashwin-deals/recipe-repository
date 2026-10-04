@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { AuthProvider } from "./components/AuthProvider";
 import { CartFab } from "./components/CartFab";
 import { ChatProvider } from "./components/ChatProvider";
 import { ChatWidget } from "./components/ChatWidget";
@@ -8,8 +9,12 @@ import { Nav } from "./components/Nav";
 import { OfflineBanner } from "./components/OfflineBanner";
 import { RecipeLibraryProvider } from "./components/RecipeLibraryProvider";
 import { ShoppingListProvider } from "./components/ShoppingListProvider";
+import { Splash } from "./components/Splash";
 import { ToastProvider } from "./components/Toast";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { useAuth } from "./hooks/useAuth";
+import { returnPath } from "./lib/returnPath";
+import { AuthPage } from "./pages/AuthPage";
 import { Dashboard } from "./pages/Dashboard";
 import { Insights } from "./pages/Insights";
 import { NotFound } from "./pages/NotFound";
@@ -17,17 +22,16 @@ import { Planner } from "./pages/Planner";
 import { RecipeDetail } from "./pages/RecipeDetail";
 import { Shopping } from "./pages/Shopping";
 
+/** State that belongs to one signed-in user. Remounted (so emptied) whenever the user changes. */
 export function Providers({ children }: { children: ReactNode }) {
   return (
-    <ConfigProvider>
-      <ToastProvider>
-        <ShoppingListProvider>
-          <ChatProvider>
-            <RecipeLibraryProvider>{children}</RecipeLibraryProvider>
-          </ChatProvider>
-        </ShoppingListProvider>
-      </ToastProvider>
-    </ConfigProvider>
+    <ToastProvider>
+      <ShoppingListProvider>
+        <ChatProvider>
+          <RecipeLibraryProvider>{children}</RecipeLibraryProvider>
+        </ChatProvider>
+      </ShoppingListProvider>
+    </ToastProvider>
   );
 }
 
@@ -62,7 +66,7 @@ function Layout({ children }: { children: ReactNode }) {
   );
 }
 
-export default function App() {
+function SignedInApp() {
   return (
     <Providers>
       <Layout>
@@ -77,5 +81,35 @@ export default function App() {
         </Routes>
       </Layout>
     </Providers>
+  );
+}
+
+function AuthRoutes() {
+  const { status, user } = useAuth();
+  const location = useLocation();
+  if (status === "loading") return <Splash />;
+  const authPage = user ? <Navigate to={returnPath(location.state)} replace /> : <AuthPage />;
+  return (
+    <Routes>
+      <Route path="/login" element={authPage} />
+      <Route path="/signup" element={authPage} />
+      <Route
+        path="*"
+        element={
+          // Keyed by user: switching accounts remounts every data provider, so nothing carries over.
+          user ? <SignedInApp key={user.id} /> : <Navigate to="/login" replace state={{ from: location }} />
+        }
+      />
+    </Routes>
+  );
+}
+
+export default function App() {
+  return (
+    <ConfigProvider>
+      <AuthProvider>
+        <AuthRoutes />
+      </AuthProvider>
+    </ConfigProvider>
   );
 }

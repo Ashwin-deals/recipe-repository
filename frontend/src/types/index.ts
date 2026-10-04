@@ -26,7 +26,24 @@ export interface Recipe {
   photo_url?: string | null;
 }
 
+export interface User {
+  id: number;
+  email: string;
+  display_name: string;
+  initials: string;
+  /** The shared, public demo account. */
+  is_demo: boolean;
+  created_at: string;
+}
+
+export interface AuthResult {
+  user: User;
+  csrf_token: string;
+}
+
 export interface AppConfig {
+  allow_signups: boolean;
+  demo_login: boolean;
   ai_enabled: boolean;
   categories: Category[];
   days: string[];

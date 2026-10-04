@@ -44,7 +44,10 @@ export default defineConfig({
         cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
-            // Read-only data: network first, falling back to the last copy when offline.
+            // Read-only data: network first, falling back to the last copy when offline. These are
+            // one user's private responses: the app deletes this cache on sign-out, when the session
+            // ends and before a different user's data is shown (src/lib/session.ts). Only 200s are
+            // stored, so a 401 is never replayed, and /api/auth/* is never cached.
             urlPattern: /\/api\/(list|recipes|config|planner|insights)(\/|\?|$)/,
             handler: "NetworkFirst",
             method: "GET",
