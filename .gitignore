@@ -8,3 +8,14 @@ instance/
 .DS_Store
 .env.*
 !.env.example
+
+# Local databases anywhere (instance/ already covers the default location)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Frontend dependencies and build output (also in frontend/.gitignore)
+node_modules/
+frontend/dist/
