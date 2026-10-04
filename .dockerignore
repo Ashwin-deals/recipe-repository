@@ -6,12 +6,17 @@ venv
 **/__pycache__
 **/*.pyc
 .pytest_cache
+# Local SQLite data (your recipes, test accounts, sessions) must never be baked into the image.
 instance
+**/*.db
+**/*.db-wal
+**/*.db-shm
 .env
 .env.*
 !.env.example
 tests
-frontend/node_modules
+node_modules
+**/node_modules
 frontend/dist
 frontend/dev-dist
 frontend/coverage
