@@ -123,7 +123,8 @@ Tables: `recipes`, `shopping_list` (the two core tables), plus `meal_plan`, `eve
 ## Run locally
 
 Requires Python 3.12 and Node.js 24 (LTS). No Google Cloud account is needed: with no environment variables set, the
-app runs fully offline using SQLite and the built-in non-AI fallbacks. Six demo recipes are seeded on first run.
+app runs fully offline using SQLite and the built-in non-AI fallbacks. Every new account gets its own copy of six
+starter recipes. For local http, put `APP_ENV=development` and `COOKIE_SECURE=0` in your `.env` (see Accounts below).
 
 ### One-time setup
 
@@ -208,6 +209,38 @@ The BigQuery events table has three `REQUIRED` columns: `type STRING`, `payload 
 `created_at`; the dataset must already exist. To create it yourself, `gcp.events_schema_json()` prints the schema
 for the console's "Edit as text" box. The service account needs BigQuery Data Editor on the dataset (it includes
 creating tables) and BigQuery Job User on the project for queries. AI endpoints are rate limited (`AI_RATE_LIMIT`, default 10/minute per IP) and capped per day (`AI_DAILY_CAP`, default 300, counted in the `events` table).
+
+## Accounts and privacy
+
+Everyone signs in, and every recipe box is private. A user can never see, change, search or ask the chef about
+another user's recipes, list or plan.
+
+- **Sign up / sign in / sign out / delete account** at `/api/auth/*`. Passwords: 8 to 128 characters and not on a
+  common-password list (no composition rules). They're hashed with scrypt and a per-user salt; hashes are never
+  returned or logged.
+- **Sessions are server-side.** The cookie (`cartchef_session`) holds a random 256-bit token: HttpOnly,
+  SameSite=Lax, and Secure unless `COOKIE_SECURE=0`. Only a SHA-256 hash of it is stored.
+  - Sessions last `SESSION_DAYS` (7). Without "Keep me signed in" the cookie also ends when the browser closes.
+  - With it, the session lasts `REMEMBER_DAYS` (30).
+  - Signing out deletes the session on the server.
+- **CSRF:** every write needs the `X-CSRF-Token` header. Its value comes from `/api/auth/me` or `/api/csrf`, and it is
+  tied to the session.
+- **Abuse limits:**
+  - Sign-ins are rate-limited per client.
+  - After 5 wrong passwords for an email from one client (20 from anywhere), sign-in locks for 15 minutes.
+  - Failures pause briefly, and the error is always "Email or password is incorrect".
+- **Isolation:** every row (recipe, list item, plan entry, event, AI usage) has a `user_id`. Every query filters on the
+  signed-in user's id, taken only from the session. Someone else's id gets the same 404 as an id that doesn't exist.
+  `tests/test_isolation.py` checks every API route with two users.
+- **Migrating an older database:** recipes and lists from before accounts had no owner, so they are deleted on first
+  start (the startup log says how many).
+- **Shared devices:** signing out, an expired session, or a different user signing in all clear the offline tick queue,
+  the chat history and the service worker's cached API responses.
+- **Analytics:** BigQuery events carry a salted hash of the user id (`user_hash` in the payload), never an email.
+- **Production** (`APP_ENV=production`, the Docker default) refuses to start without a strong `SECRET_KEY`.
+- **Optional demo:** `DEMO_LOGIN=1` adds a "Try the shared demo" button for one public account that anyone can change.
+  It resets daily, and it's off by default.
+- **Not included yet:** password reset by email. Someone who forgets their password has to create a new account.
 
 ## Snap-a-recipe
 

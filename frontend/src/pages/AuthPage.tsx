@@ -193,7 +193,8 @@ export function AuthPage() {
                   setEmail(event.target.value);
                   setServerFields((f) => ({ ...f, email: undefined }));
                 }}
-                onBlur={() => setTouched((t) => ({ ...t, email: true }))}
+                // Empty fields are only flagged on submit, so tabbing past (or switching modes) isn't scolded.
+                onBlur={() => email.trim() && setTouched((t) => ({ ...t, email: true }))}
                 aria-invalid={emailError ? true : undefined}
                 aria-describedby={emailError ? `${ids}-email-error` : undefined}
                 placeholder="you@example.com"
@@ -234,7 +235,7 @@ export function AuthPage() {
                   onKeyDown={onPasswordKey}
                   onKeyUp={onPasswordKey}
                   onBlur={() => {
-                    setTouched((t) => ({ ...t, password: true }));
+                    if (password) setTouched((t) => ({ ...t, password: true }));
                     setCapsLock(false);
                   }}
                   aria-invalid={passwordError ? true : undefined}
@@ -415,7 +416,7 @@ function BrandPanel() {
           {RECEIPT.map(([qty, name]) => (
             <p key={name} className="stage-receipt-line">
               <span className="num">{qty}</span>
-              <span>{name}</span>
+              {name}
             </p>
           ))}
           <p className="stage-receipt-total">

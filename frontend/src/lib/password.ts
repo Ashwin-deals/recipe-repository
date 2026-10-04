@@ -37,8 +37,8 @@ export function passwordStrength(password: string, email = ""): Strength {
     "",
     "Okay. Adding a few more characters makes it much harder to guess.",
     "Good. A short phrase of three or four words is even better.",
-    "Strong password.",
-    "Very strong password.",
+    "Hard to guess.",
+    "Hard to guess, and easy for you to remember if it's a phrase.",
   ] as const;
   return { score: capped, label: labels[capped], hint: hints[capped] };
 }

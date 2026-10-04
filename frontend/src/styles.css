@@ -1190,8 +1190,9 @@ button.user-avatar:hover, .user-avatar[aria-expanded="true"] { transform: transl
 
 /* ---------- Sign in / sign up ---------- */
 body:has(.auth) { padding-bottom: 0; }
-.auth { display: grid; min-height: 100vh; min-height: 100dvh; }
-@media (min-width: 900px) { .auth { grid-template-columns: minmax(380px, 1.05fr) minmax(440px, 1fr); } }
+.auth { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; min-height: 100dvh; }
+@media (min-width: 900px) { .auth { grid-template-rows: none; grid-template-columns: minmax(380px, 1.05fr) minmax(440px, 1fr); } }
+.auth-pitch { display: grid; gap: 10px; }
 
 /* Brand panel: deep forest block with the grid paper showing through. */
 .auth-brand {
@@ -1216,7 +1217,7 @@ body:has(.auth) { padding-bottom: 0; }
   }
   .auth-tagline { font-size: clamp(3rem, 5.2vw, 5rem); margin-top: 6vh; }
   .auth-sub { font-size: 1.1rem; margin-top: 14px; }
-  .auth-stage { display: block; position: relative; min-height: 300px; margin: 8px 0; }
+  .auth-stage { display: block; position: relative; min-height: 340px; margin: 12px 0 20px; }
   .auth-cats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
 }
 @media (min-width: 900px) and (max-height: 760px) { .auth-stage { display: none; } .auth-tagline { margin-top: 2vh; } }
@@ -1228,20 +1229,20 @@ body:has(.auth) { padding-bottom: 0; }
 
 /* The still life: recipe cards and a receipt, drifting a little. */
 .stage-card {
-  position: absolute; width: clamp(150px, 15vw, 210px); overflow: hidden;
+  position: absolute; width: clamp(140px, 13vw, 196px); overflow: hidden;
   background: var(--surface); color: var(--ink); border: 2px solid #000; border-radius: 6px; box-shadow: 6px 6px 0 #000;
   animation: stage-in 0.7s var(--ease) both, drift 7s ease-in-out infinite;
 }
-.stage-card .cover { aspect-ratio: 16 / 10; }
+.stage-card .cover { aspect-ratio: 16 / 9; }
 .stage-card-body { display: grid; gap: 2px; padding: 8px 10px 10px; }
 .stage-card-body strong { font: 650 0.92rem/1.15 var(--display); }
 .stage-card-body .num { color: var(--ink-3); font-size: 0.75rem; }
-.stage-card-1 { left: 0; top: 2%; --r: -6deg; animation-delay: 0.05s, 0s; }
-.stage-card-2 { left: 30%; top: 22%; --r: 4deg; animation-delay: 0.15s, -2s; z-index: 2; }
-.stage-card-3 { left: 6%; top: 52%; --r: 3deg; animation-delay: 0.25s, -4s; }
-.stage-card-4 { left: 38%; top: 66%; --r: -3deg; animation-delay: 0.35s, -1s; z-index: 1; }
+.stage-card-1 { left: 0; top: 0; --r: -6deg; animation-delay: 0.05s, 0s; }
+.stage-card-2 { left: 27%; top: 14%; --r: 4deg; animation-delay: 0.15s, -2s; z-index: 2; }
+.stage-card-3 { left: 4%; bottom: 4%; --r: 3deg; animation-delay: 0.25s, -4s; }
+.stage-card-4 { left: 33%; bottom: 0; --r: -3deg; animation-delay: 0.35s, -1s; z-index: 1; }
 .stage-receipt {
-  position: absolute; right: 0; top: 6%; width: clamp(150px, 13vw, 190px); padding: 14px 14px 18px;
+  position: absolute; right: 0; top: 4%; width: clamp(176px, 15vw, 214px); padding: 14px 14px 18px;
   background: var(--paper); color: var(--paper-ink); font: 500 0.78rem/1.6 var(--mono);
   border: 2px solid #000; box-shadow: 6px 6px 0 #000; transform: rotate(3deg); transform-origin: top center;
   animation: print 1.1s var(--ease) 0.3s both, drift 8s ease-in-out -3s infinite; --r: 3deg;
@@ -1251,8 +1252,8 @@ body:has(.auth) { padding-bottom: 0; }
     conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 12px 8px repeat-x;
 }
 .stage-receipt-head { padding-bottom: 6px; margin-bottom: 6px; border-bottom: 2px dashed var(--paper-rule); font-weight: 600; letter-spacing: 0.1em; text-align: center; }
-.stage-receipt-line { display: flex; gap: 8px; }
-.stage-receipt-line .num { min-width: 6ch; color: var(--paper-muted); }
+.stage-receipt-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage-receipt-line .num { margin-right: 0.6ch; color: var(--paper-muted); }
 .stage-receipt-total { display: flex; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 2px dashed var(--paper-rule); font-weight: 600; }
 .stage-chef {
   position: absolute; right: 8%; bottom: 4%; z-index: 3; display: grid; place-items: center; width: 92px; height: 92px;
@@ -1272,8 +1273,9 @@ body:has(.auth) { padding-bottom: 0; }
 @keyframes print { from { clip-path: inset(0 0 100% 0); } to { clip-path: inset(0 0 0 0); } }
 
 /* Form side */
-.auth-main { position: relative; display: grid; align-content: center; justify-items: center; padding: 20px 16px 40px; }
-@media (min-width: 900px) { .auth-main { padding: 40px; } }
+.auth-main { position: relative; display: grid; align-content: start; justify-items: center; padding: 20px 16px 40px; }
+@media (min-width: 560px) and (max-width: 899px) { .auth-main { padding-top: 36px; } }
+@media (min-width: 900px) { .auth-main { align-content: center; padding: 40px; } }
 .auth-tools { position: absolute; top: 14px; right: 16px; }
 .auth-brand-top { padding-right: 56px; }
 @media (max-width: 899px) { .auth-tools { position: absolute; top: 14px; right: 16px; z-index: 2; } .auth-main { position: static; } }
@@ -1336,11 +1338,11 @@ body:has(.auth) { padding-bottom: 0; }
 
 .strength { display: grid; gap: 6px; }
 .strength-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.strength-bar span { height: 6px; background: var(--surface-2); border: 1px solid var(--rule); transition: background-color 0.25s; }
+.strength-bar span { height: 8px; background: var(--surface-2); border: 1px solid var(--rule); transition: background-color 0.25s; }
 .strength-bar[data-score="0"] span:first-child { background: var(--danger); border-color: var(--danger); }
 .strength-bar[data-score="1"] .is-on { background: var(--breakfast); border-color: var(--line); }
 .strength-bar[data-score="2"] .is-on { background: var(--lunch); border-color: var(--line); }
-.strength-bar[data-score="3"] .is-on, .strength-bar[data-score="4"] .is-on { background: var(--dinner); border-color: var(--line); }
+.strength-bar[data-score="3"] .is-on, .strength-bar[data-score="4"] .is-on { background: var(--accent); border-color: var(--line); }
 .strength-hint { color: var(--ink-2); font-size: 0.88rem; }
 
 .remember { position: relative; display: flex; align-items: center; gap: 10px; min-height: 44px; cursor: pointer; font-weight: 600; }
