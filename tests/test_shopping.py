@@ -140,7 +140,9 @@ def test_empty_lines_are_ignored(db, uid):
 
 
 def test_add_recipe_logs_events(db, uid):
-    recipe = {"id": 7, "title": "Toast", "category": "Breakfast", "lines": ["2 slices bread", "1 tbsp butter"]}
+    recipe_id = database.create_recipe(db, uid, {"title": "Toast", "prep_time": 5, "category": "Breakfast",
+                                                 "ingredients": ["2 slices bread", "1 tbsp butter"]})
+    recipe = database.get_recipe(db, uid, recipe_id)
     stats = shopping.add_recipe(db, uid, recipe, 2)
     assert stats == {"added": 2, "merged": 0}
     types = [r["type"] for r in db.execute("SELECT type FROM events ORDER BY id")]

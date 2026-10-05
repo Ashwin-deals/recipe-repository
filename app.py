@@ -674,13 +674,43 @@ def api_update_recipe(recipe_id: int):
     return jsonify(recipe=database.get_recipe(db, current_user_id(), recipe_id))
 
 
+@bp.get("/api/recipes/<int:recipe_id>/list-impact")
+def api_recipe_list_impact(recipe_id: int):
+    """How many list items deleting this recipe would remove or reduce (for the confirmation)."""
+    recipe = recipe_or_404(recipe_id)
+    return jsonify(shopping.remove_recipe_items(get_db(), current_user_id(), recipe, apply=False))
+
+
 @bp.delete("/api/recipes/<int:recipe_id>")
 def api_delete_recipe(recipe_id: int):
-    recipe_or_404(recipe_id)
+    """Delete a recipe and take its ingredients back off the list, in one transaction.
+
+    Its meal_plan entries go too (ON DELETE CASCADE). Either everything happens or nothing does.
+    """
     db = get_db()
-    database.delete_recipe(db, current_user_id(), recipe_id)
-    db.commit()
-    return jsonify(deleted=recipe_id)
+    uid = current_user_id()
+    if db.in_transaction:
+        db.commit()
+    db.execute("BEGIN IMMEDIATE")  # take the write lock before reading, so nothing changes underneath
+    try:
+        recipe = database.get_recipe(db, uid, recipe_id)
+        if recipe is None:
+            db.rollback()
+            abort(404, "That recipe doesn't exist (it may have been deleted).")
+        result = shopping.remove_recipe_items(db, uid, recipe)
+        if not database.delete_recipe(db, uid, recipe_id):
+            raise RuntimeError("recipe vanished during delete")
+        database.log_event(db, uid, "recipe_deleted", {
+            "recipe_id": recipe_id, "list_removed": result["removed"], "list_reduced": result["reduced"],
+        })
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        db.rollback()
+        raise
+    return jsonify(deleted=recipe_id, list_removed=result["removed"], list_reduced=result["reduced"],
+                   counts=list_counts(db))
 
 
 @bp.get("/api/recipes/<int:recipe_id>/scaled")

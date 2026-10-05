@@ -144,7 +144,9 @@ def test_get_and_delete_recipe_cascades_to_planner(client, db, add_recipe, uid):
     database.add_to_plan(db, uid, "Monday", recipe_id, 1)
     db.commit()
     response = client.delete(f"/api/recipes/{recipe_id}")
-    assert response.status_code == 200 and response.json == {"deleted": recipe_id}
+    assert response.status_code == 200
+    assert response.json == {"deleted": recipe_id, "list_removed": 0, "list_reduced": 0,
+                             "counts": {"total": 0, "checked": 0, "open": 0}}
     assert database.get_recipe(db, uid, recipe_id) is None
     assert db.execute("SELECT COUNT(*) FROM meal_plan").fetchone()[0] == 0
     assert client.delete(f"/api/recipes/{recipe_id}").status_code == 404

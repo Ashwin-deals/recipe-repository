@@ -79,9 +79,26 @@ CREATE TABLE IF NOT EXISTS shopping_list (
     aisle      TEXT    NOT NULL DEFAULT 'Other',
     checked    INTEGER NOT NULL DEFAULT 0 CHECK (checked IN (0, 1)),
     sources    TEXT    NOT NULL DEFAULT '[]',
+    -- 1 when every addition to this row is recorded in list_contributions. Rows added before
+    -- contributions were tracked stay 0 and fall back to matching by source title.
+    tracked    INTEGER NOT NULL DEFAULT 0 CHECK (tracked IN (0, 1)),
     created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_shopping_user_key ON shopping_list (user_id, item_key, checked);
+
+-- What each recipe (or a hand-typed line, recipe_id NULL) added to a list row, in the units it
+-- was added in, so deleting a recipe can take back exactly its share of a merged item.
+CREATE TABLE IF NOT EXISTS list_contributions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id    INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    item_id    INTEGER NOT NULL REFERENCES shopping_list (id) ON DELETE CASCADE,
+    recipe_id  INTEGER REFERENCES recipes (id) ON DELETE CASCADE,
+    qty        TEXT,
+    unit       TEXT,
+    created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_contributions_item ON list_contributions (item_id);
+CREATE INDEX IF NOT EXISTS idx_contributions_recipe ON list_contributions (user_id, recipe_id);
 
 CREATE TABLE IF NOT EXISTS meal_plan (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -148,6 +165,7 @@ def init_db(path: str) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         drop_ownerless_tables(conn)
         conn.executescript(SCHEMA)
+        add_missing_columns(conn)
         conn.commit()
     finally:
         conn.close()
@@ -198,6 +216,19 @@ def drop_ownerless_tables(conn: sqlite3.Connection) -> dict[str, int]:
     conn.commit()
     log.warning("Removed data from before accounts existed (it had no owner): %s", removed)
     return removed
+
+
+def add_missing_columns(conn: sqlite3.Connection) -> list[str]:
+    """Add columns introduced after a table was first created. Safe to run on every start.
+
+    Existing shopping_list rows get tracked = 0: their history isn't in list_contributions.
+    """
+    added = []
+    if "tracked" not in (_columns(conn, "shopping_list") or {"tracked"}):
+        conn.execute("ALTER TABLE shopping_list ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0 "
+                     "CHECK (tracked IN (0, 1))")
+        added.append("shopping_list.tracked")
+    return added
 
 
 def get_meta(conn: sqlite3.Connection, key: str) -> str | None:
