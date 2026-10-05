@@ -79,12 +79,13 @@ describe("Dashboard", () => {
     mockApi({
       "GET /api/recipes": { recipes: [pancakes, curry] },
       "GET /api/list": makeList(),
-      "DELETE /api/recipes/1": { deleted: 1 },
+      "GET /api/recipes/1/list-impact": { removed: 0, reduced: 0 },
+      "DELETE /api/recipes/1": { deleted: 1, list_removed: 0, list_reduced: 0, counts: { total: 0, checked: 0, open: 0 } },
     });
     renderWithProviders(<Dashboard />);
     await userEvent.click(await screen.findByRole("button", { name: "Pancakes" }));
     await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await userEvent.click(screen.getByRole("button", { name: "Tap again to delete" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Delete recipe" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Pancakes" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Chicken Curry" })).toBeInTheDocument();

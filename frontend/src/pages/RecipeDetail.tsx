@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { addRecipeToList, deleteRecipe, estimateNutrition, getRecipe, getScaled, suggestSubstitutes } from "../api/endpoints";
-import { ConfirmButton } from "../components/ConfirmButton";
+import { addRecipeToList, estimateNutrition, getRecipe, getScaled, suggestSubstitutes } from "../api/endpoints";
+import { DeleteRecipeDialog } from "../components/DeleteRecipeDialog";
 import { DietTags } from "../components/DietTags";
 import { Icon } from "../components/Icon";
 import { RecipeCover } from "../components/RecipeCover";
@@ -51,6 +51,7 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
   const { openChat } = useChat();
   const { notify } = useRecipeLibrary();
   const [multiplier, setMultiplier] = useState(1);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [lines, setLines] = useState(recipe.lines);
   const [swaps, setSwaps] = useState<Record<number, SubstituteResult | "loading">>({});
   const [nutrition, setNutrition] = useState<Nutrition | null>(recipe.nutrition);
@@ -112,15 +113,6 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
     }
   }
 
-  async function remove() {
-    try {
-      await deleteRecipe(recipe.id);
-      toast.show(`Deleted “${recipe.title}”.`);
-      notify({ kind: "deleted", id: recipe.id }); // RecipeDetail goes back to the recipes
-    } catch (err) {
-      toast.show(errorMessage(err), { error: true });
-    }
-  }
 
   const category = recipe.category.toLowerCase();
   return (
@@ -217,11 +209,19 @@ function RecipeView({ recipe }: { recipe: Recipe }) {
       </div>
 
       <div className="danger-zone">
-        <ConfirmButton className="btn btn-danger" confirmLabel="Tap again to delete" onConfirm={() => void remove()}>
+        <button type="button" className="btn btn-danger" onClick={() => setConfirmingDelete(true)}>
           <Icon name="trash" />
           <span>Delete recipe</span>
-        </ConfirmButton>
+        </button>
       </div>
+      {confirmingDelete && (
+        <DeleteRecipeDialog
+          recipe={recipe}
+          onClose={() => setConfirmingDelete(false)}
+          // RecipeDetail navigates back to the recipes when it hears about the delete.
+          onDeleted={(id) => notify({ kind: "deleted", id })}
+        />
+      )}
     </article>
   );
 }

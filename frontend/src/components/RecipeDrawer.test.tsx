@@ -111,13 +111,85 @@ describe("RecipeDrawer", () => {
     expect(api.callsTo("POST", "/api/recipes/1/add-to-list")[0]?.body).toEqual({ multiplier: 4 });
   });
 
-  it("needs two taps to delete", async () => {
-    const api = mockApi({ "GET /api/list": makeList(), "DELETE /api/recipes/1": { deleted: 1 } });
-    const { onDeleted } = renderDrawer();
-    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-    expect(api.callsTo("DELETE", "/api/recipes/1")).toHaveLength(0);
-    await userEvent.click(screen.getByRole("button", { name: "Tap again to delete" }));
-    await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith(1));
+  describe("deleting", () => {
+    const impact = (removed: number, reduced: number) => ({ "GET /api/recipes/1/list-impact": { removed, reduced } });
+    const deleted = (removed: number, reduced: number) => ({
+      "DELETE /api/recipes/1": { deleted: 1, list_removed: removed, list_reduced: reduced, counts: { total: 0, checked: 0, open: 0 } },
+    });
+
+    it("opens a confirmation that says how many list items come with the recipe", async () => {
+      mockApi({ "GET /api/list": makeList(), ...impact(2, 1) });
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      const dialog = screen.getByRole("alertdialog", { name: "Delete “Pancakes”?" });
+      expect(dialog).toHaveTextContent("Deleting this recipe will also remove its ingredients from your shopping list.");
+      expect(await within(dialog).findByText(/3 items on your list came from this recipe\. 1 is shared/)).toBeInTheDocument();
+      expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus();
+      expect(within(dialog).getByRole("button", { name: "Delete recipe and ingredients" })).toBeInTheDocument();
+    });
+
+    it("says only the recipe goes when none of it is on the list", async () => {
+      mockApi({ "GET /api/list": makeList(), ...impact(0, 0) });
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      expect(await screen.findByText(/only the recipe will be deleted/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Delete recipe" })).toBeInTheDocument();
+    });
+
+    it("Cancel deletes nothing and sends no delete request", async () => {
+      const api = mockApi({ "GET /api/list": makeList(), ...impact(3, 0), ...deleted(3, 0) });
+      const { onDeleted, onClose } = renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(api.callsTo("DELETE", "/api/recipes/1")).toHaveLength(0);
+      expect(onDeleted).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole("button", { name: "Delete" })).toHaveFocus();
+    });
+
+    it("Esc closes only the confirmation, not the drawer, and deletes nothing", async () => {
+      const api = mockApi({ "GET /api/list": makeList(), ...impact(3, 0), ...deleted(3, 0) });
+      const { onClose } = renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.keyboard("{Escape}");
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toBeInTheDocument(); // the drawer
+      expect(api.callsTo("DELETE", "/api/recipes/1")).toHaveLength(0);
+    });
+
+    it("clicking outside cancels too", async () => {
+      const api = mockApi({ "GET /api/list": makeList(), ...impact(3, 0) });
+      renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(document.querySelector(".dialog-backdrop") as HTMLElement);
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(api.callsTo("DELETE", "/api/recipes/1")).toHaveLength(0);
+    });
+
+    it("Confirm deletes, refreshes the list and says what was removed", async () => {
+      const api = mockApi({ "GET /api/list": makeList(), ...impact(3, 1), ...deleted(3, 1) });
+      const { onDeleted } = renderDrawer();
+      await vi.waitFor(() => expect(api.callsTo("GET", "/api/list")).toHaveLength(1));
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(screen.getByRole("button", { name: "Delete recipe and ingredients" }));
+      await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledWith(1));
+      expect(api.callsTo("DELETE", "/api/recipes/1")).toHaveLength(1);
+      await vi.waitFor(() => expect(api.callsTo("GET", "/api/list")).toHaveLength(2)); // list reloaded
+      expect(await screen.findByText("Recipe and 3 list items removed; 1 shared item reduced.")).toBeInTheDocument();
+    });
+
+    it("keeps the dialog open with the error if the delete fails", async () => {
+      const { reply } = await import("../test/mockApi");
+      mockApi({ "GET /api/list": makeList(), ...impact(1, 0), "DELETE /api/recipes/1": reply(500, { error: "Something went wrong on our side." }) });
+      const { onDeleted } = renderDrawer();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(screen.getByRole("button", { name: "Delete recipe and ingredients" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Something went wrong on our side.");
+      expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+      expect(onDeleted).not.toHaveBeenCalled();
+    });
   });
 
   it("links to the full recipe page", () => {

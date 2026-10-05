@@ -1384,3 +1384,26 @@ body:has(.auth) { padding-bottom: 0; }
   .auth-card.shake-0, .auth-card.shake-1 { animation: fade 0.2s ease both !important; }
   .auth-toggle-thumb { transition: none; }
 }
+
+
+/* ---------- Confirmation dialog (stacks above drawers; same hard-edged panel as the app) ---------- */
+.dialog-layer { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 16px; }
+.dialog-backdrop { position: absolute; inset: 0; background: var(--backdrop); animation: fade 0.2s ease both; }
+.dialog {
+  position: relative; width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto;
+  display: grid; gap: 16px; padding: 22px; background: var(--surface); color: var(--ink);
+  border: 2px solid var(--line); border-radius: 6px; box-shadow: var(--hard-lg);
+  animation: rise 0.22s var(--ease) both;
+}
+.dialog-head { display: flex; align-items: center; gap: 12px; }
+.dialog-head h2 { font-size: var(--step-2); overflow-wrap: anywhere; }
+.dialog-icon {
+  display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: 4px;
+  background: var(--danger); color: var(--on-danger); border: 2px solid var(--line);
+}
+.dialog-body { display: grid; gap: 8px; }
+.dialog-impact { padding: 10px 12px; border-left: 4px solid var(--danger); background: var(--surface-2); font-weight: 650; }
+.dialog-impact:empty { display: none; }
+.dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
+@media (max-width: 479px) { .dialog-actions .btn { flex: 1 1 100%; } }
+@media (prefers-reduced-motion: reduce) { .dialog { animation: fade 0.2s ease both; } }

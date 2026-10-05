@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { addRecipeToList, deleteRecipe, getScaled } from "../api/endpoints";
+import { addRecipeToList, getScaled } from "../api/endpoints";
 import { useShoppingList } from "../hooks/useShoppingList";
 import { useToast } from "../hooks/useToast";
 import { errorMessage } from "../lib/errors";
 import { flyToCart } from "../lib/flyToCart";
 import { addedMessage } from "../lib/messages";
 import type { Recipe } from "../types";
-import { ConfirmButton } from "./ConfirmButton";
+import { DeleteRecipeDialog } from "./DeleteRecipeDialog";
 import { DietTags } from "./DietTags";
 import { Icon } from "./Icon";
 import { RecipeCover } from "./RecipeCover";
@@ -32,6 +32,7 @@ export function RecipeDrawer({ recipe, onClose, onDeleted, onAsk }: RecipeDrawer
   const [multiplier, setMultiplier] = useState(1);
   const [lines, setLines] = useState(recipe.lines);
   const [adding, setAdding] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const latestScale = useRef(0);
   const addButton = useRef<HTMLButtonElement>(null);
 
@@ -58,16 +59,6 @@ export function RecipeDrawer({ recipe, onClose, onDeleted, onAsk }: RecipeDrawer
       toast.show(errorMessage(err), { error: true });
     } finally {
       setAdding(false);
-    }
-  }
-
-  async function remove() {
-    try {
-      await deleteRecipe(recipe.id);
-      toast.show(`Deleted “${recipe.title}”.`);
-      onDeleted(recipe.id);
-    } catch (err) {
-      toast.show(errorMessage(err), { error: true });
     }
   }
 
@@ -112,11 +103,14 @@ export function RecipeDrawer({ recipe, onClose, onDeleted, onAsk }: RecipeDrawer
             <button type="button" className="link-arrow btn-link" onClick={() => onAsk(recipe)}>
               <Icon name="chat" /> Ask about this recipe
             </button>
-            <ConfirmButton className="btn-text" confirmLabel="Tap again to delete" onConfirm={() => void remove()}>
+            <button type="button" className="btn-text" onClick={() => setConfirmingDelete(true)}>
               Delete
-            </ConfirmButton>
+            </button>
           </div>
         </footer>
+        {confirmingDelete && (
+          <DeleteRecipeDialog recipe={recipe} onClose={() => setConfirmingDelete(false)} onDeleted={onDeleted} />
+        )}
     </Sheet>
   );
 }

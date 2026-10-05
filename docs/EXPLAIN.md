@@ -31,7 +31,12 @@ meals into a single shopping list where matching ingredients merge (2 eggs + 3 e
    - "Add to list" with the chosen multiplier.
    - "Estimate nutrition" (Gemini) and diet tags (keyword-based, or from Gemini).
    - A "Swap" button per ingredient suggests substitutions.
-   - Edit, delete, or "Ask the chef" about this recipe.
+   - Edit it, or "Ask the chef" about it.
+   - Delete it. A confirmation says how many list items came from this recipe. Confirming deletes the recipe and takes
+     its ingredients off the list in one transaction:
+     - items only this recipe added are removed, ticked or not;
+     - merged items keep the other recipes' share;
+     - the recipe's meal-plan entries go too.
 5. **Shopping list** (`/shopping`, also a panel on the dashboard)
    - Drawn as a printed till receipt and grouped by store aisle.
    - Tick items off. **This works offline**: ticks are queued and synced when the connection returns.
@@ -138,7 +143,8 @@ Frontend structure (`frontend/src/App.tsx`):
 | `sessions` | one row per sign-in: **SHA-256 hash** of the session token (never the token), user id, remember flag, created, expires, last seen |
 | `auth_failures` | failed sign-ins, keyed by an HMAC of the email (and client). Used for the lockout; pruned after a day |
 | `recipes` | `user_id`, title, prep time (0 to 1440 min), category, ingredient lines (newline-separated), nutrition JSON, diet tags JSON |
-| `shopping_list` | `user_id`, merge key (e.g. `egg`), display name, unit, quantity (exact fraction as text, e.g. `3/2`), aisle, checked, source recipe titles |
+| `shopping_list` | `user_id`, merge key (e.g. `egg`), display name, unit, quantity (exact fraction as text, e.g. `3/2`), aisle, checked, source recipe titles, `tracked` (1 when every addition to the row is recorded in `list_contributions`) |
+| `list_contributions` | What each recipe (or a hand-typed line, `recipe_id` NULL) added to a list row: `item_id`, `recipe_id`, quantity and unit as added. Lets deleting a recipe take back exactly its share |
 | `meal_plan` | `user_id`, day, `recipe_id`, multiplier |
 | `events` | `user_id`, event type, JSON payload, time. Feeds Insights, the AI daily caps and the BigQuery mirror |
 | `meta` | key/value: `secret_key` (a generated key, development only), `demo_reset_day` |
@@ -380,6 +386,7 @@ for BigQuery on a background thread.
 | `item_amount_changed` | `shopping.set_amount` | item_id, item_key, qty, unit |
 | `item_removed` | `shopping.remove` | item_id, item_key |
 | `list_cleared` | `shopping.clear` | scope (`all`/`checked`), removed |
+| `recipe_deleted` | `app.api_delete_recipe` | recipe_id, list_removed, list_reduced (counts only, no title) |
 | `ai_call` | `database.consume_ai_call` | feature (`import`/`chat`/`nutrition`/`substitute`) |
 | `ai_import` | `app.api_import` | source (`gemini`/`fallback`), kind (`image`/`text`), ingredients (a count) |
 | `ai_chat` | `app.api_chat` | mode (`recipe`/`general`), source, proposal (true/false), shopping_items (a count) |

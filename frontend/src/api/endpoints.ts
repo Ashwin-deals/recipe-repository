@@ -46,7 +46,17 @@ export const updateRecipe = (id: number, input: RecipeInput) => api.put<{ recipe
 export const sendChat = (message: string, recipeId: number | null, history: ChatTurn[]) =>
   api.post<ChatResult>("/api/chat", { message, recipe_id: recipeId, history });
 
-export const deleteRecipe = (id: number) => api.delete<{ deleted: number }>(`/api/recipes/${id}`);
+export interface ListImpact {
+  /** List items that came only from this recipe (deleted with it). */
+  removed: number;
+  /** Merged items that keep other recipes' share (only this recipe's amount comes off). */
+  reduced: number;
+}
+
+export const getListImpact = (id: number) => api.get<ListImpact>(`/api/recipes/${id}/list-impact`);
+
+export const deleteRecipe = (id: number) =>
+  api.delete<{ deleted: number; list_removed: number; list_reduced: number; counts: Counts }>(`/api/recipes/${id}`);
 
 export const getScaled = (id: number, multiplier: number) =>
   api.get<ScaledLines>(`/api/recipes/${id}/scaled?x=${multiplier}`);
